@@ -580,6 +580,7 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
         initializeCharts();
         initializeExtendedCharts();
+        startLivePulseLoop();
         initializeDeviceSelection();
         initializeWebSocket();
         initializeDeviceSelectionMap();
@@ -1024,7 +1025,10 @@ function safeProcessIncomingData(data) {
         if (normalizedData.history && normalizedData.history.timestamps) {
             normalizedData.history.timestamps = normalizedData.history.timestamps.map(t => {
                 try {
-                    return new Date(t);
+                    // Normalize: replace space with T for ISO 8601 compliance (SQLite format fix)
+                    const normalized = typeof t === 'string' ? t.replace(' ', 'T') : t;
+                    const d = new Date(normalized);
+                    return isNaN(d.getTime()) ? new Date() : d;
                 } catch (e) {
                     console.warn('Invalid timestamp:', t);
                     return new Date();
@@ -1067,65 +1071,12 @@ function processIncomingData(data) {
 }
 
 function showDeviceTabs(deviceType, hasRelay) {
-    console.log('showDeviceTabs called with:', { deviceType, hasRelay });
-
-    const tabs = document.getElementById('deviceTypeTabs');
-    const environmentalTab = document.getElementById('environmental-tab-li');
-    const settingsTab = document.getElementById('settings-tab-li');
-    const environmentalTabContent = document.getElementById('environmental');
-
-    console.log('Tab elements found:', {
-        tabs: !!tabs,
-        environmentalTab: !!environmentalTab,
-        environmentalTabContent: !!environmentalTabContent,
-        settingsTab: !!settingsTab
-    });
-
-    if (tabs) {
-        tabs.style.display = 'block';
-        console.log('Main tabs container made visible');
-    }
+    console.log('showDeviceTabs called for single-view dashboard:', { deviceType, hasRelay });
 
     const tabContent = document.getElementById('deviceTypeTabContent');
     if (tabContent) {
         tabContent.style.display = 'block';
     }
-
-    if (deviceType === 'extended') {
-        console.log('Device type is extended - showing and activating environmental tab');
-        if (environmentalTab) {
-            environmentalTab.style.display = 'block';
-            console.log('Environmental tab made visible');
-
-            // Force switch to environmental tab using Bootstrap's tab API
-            const environmentalTabBtn = document.getElementById('environmental-tab');
-            if (environmentalTabBtn) {
-                // Use Bootstrap's Tab API to properly switch tabs
-                const bsTab = new bootstrap.Tab(environmentalTabBtn);
-                bsTab.show();
-                console.log('Environmental tab activated using Bootstrap Tab API');
-            }
-
-            // Load environmental data cards
-            loadEnvironmentalDataCards();
-        }
-
-        // Update tab badges
-        const envBadge = document.getElementById('envBadge');
-        if (envBadge) envBadge.textContent = '+6';
-    } else {
-        console.log('Device type is not extended - hiding environmental tab');
-        if (environmentalTab) environmentalTab.style.display = 'none';
-        if (environmentalTabContent) environmentalTabContent.classList.remove('show', 'active');
-    }
-
-    if (hasRelay) {
-        if (settingsTab) settingsTab.style.display = 'block';
-    } else {
-        if (settingsTab) settingsTab.style.display = 'none';
-    }
-
-    console.log('Tab visibility updated');
 }
 
 // Function to load environmental data cards from backend API
@@ -1284,12 +1235,10 @@ function createEnvironmentalDataCards(extendedData, sensorData) {
 }
 
 function hideAllTabs() {
-    const tabs = document.getElementById('deviceTypeTabs');
     const deviceInfo = document.getElementById('deviceInfo');
     const deviceTypeIndicator = document.getElementById('deviceTypeIndicator');
     const tabContent = document.getElementById('deviceTypeTabContent');
 
-    if (tabs) tabs.style.display = 'none';
     if (deviceInfo) deviceInfo.style.display = 'none';
     if (deviceTypeIndicator) deviceTypeIndicator.style.display = 'none';
     if (tabContent) tabContent.style.display = 'none';
@@ -1319,8 +1268,12 @@ function initializeCharts() {
         if (window.ChartZoom && typeof Chart.register === 'function') {
             Chart.register(window.ChartZoom);
         }
+        if (typeof Chart.register === 'function' && typeof livePulsingPlugin !== 'undefined') {
+            Chart.register(livePulsingPlugin);
+            console.log('Successfully registered livePulsingPlugin');
+        }
     } catch (e) {
-        console.warn('Chart.js zoom plugin not available:', e);
+        console.warn('Failed to register plugins:', e);
     }
 
     const commonOptions = {
@@ -1478,7 +1431,12 @@ function initializeCharts() {
 function safeChartUpdate(chart, key = 'chart') {
     try {
         if (chart && typeof chart.update === 'function') {
-            chart.update('none'); // Use 'none' to prevent animations
+            // For live telemetry charts, use a smooth animation transition instead of 'none'
+            if (key === 'timeChart' || key === 'environmentalCombinedChart' || key === 'unifiedChart') {
+                chart.update(); // Smoothly animate updates
+            } else {
+                chart.update('none'); // No animation for heavy analytics
+            }
         }
     } catch (err) {
         console.error(`Chart update failed for ${key}:`, err);
@@ -1499,16 +1457,25 @@ function safeChartUpdate(chart, key = 'chart') {
 }
 // Helper function to create dataset config (your existing + premium visuals)
 function createDatasetConfig(label, borderColor) {
-    const bgOpacity = '0.04'; // faint professional glow
-    let backgroundColor = borderColor;
-    if (typeof borderColor === 'string') {
-        backgroundColor = borderColor.replace('0.85', bgOpacity).replace('0.8', bgOpacity);
-    }
     return {
         label,
         data: [],
         borderColor,
-        backgroundColor,
+        backgroundColor: function(context) {
+            const chart = context.chart;
+            const {ctx, chartArea} = chart;
+            if (!chartArea) {
+                return 'rgba(255, 255, 255, 0.01)'; // Fallback faint default glow
+            }
+            // Create a gorgeous canvas gradient that fades to fully transparent at the bottom
+            const gradient = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+            let color = typeof borderColor === 'string' ? borderColor : 'rgba(102, 126, 234, 0.85)';
+            let startColor = color.replace('0.85', '0.12').replace('0.8', '0.12');
+            let endColor = color.replace('0.85', '0.00').replace('0.8', '0.00');
+            gradient.addColorStop(0, startColor);
+            gradient.addColorStop(1, endColor);
+            return gradient;
+        },
         borderWidth: 2,               // sleek, sharp border strokes
         pointRadius: 0,               // hides circles on default view to eliminate visual clutter
         pointHoverRadius: 6,          // highlights specific point beautifully on cursor hover
@@ -1519,6 +1486,89 @@ function createDatasetConfig(label, borderColor) {
         tension: 0.4,                 // elegant smooth curve calculations
         fill: true                    // enables the fading area under line curves
     };
+}
+
+// Custom Chart.js Plugin for real-time live pulsing dot animation at the latest data point
+const livePulsingPlugin = {
+    id: 'livePulsing',
+    afterDatasetsDraw(chart) {
+        // Only run on line charts
+        if (chart.config.type !== 'line') return;
+
+        const {ctx} = chart;
+        chart.data.datasets.forEach((dataset, datasetIndex) => {
+            const meta = chart.getDatasetMeta(datasetIndex);
+            if (meta.hidden) return;
+
+            const points = meta.data;
+            if (points.length === 0) return;
+
+            // Get the last active point with valid coordinate
+            let lastPoint = null;
+            for (let i = points.length - 1; i >= 0; i--) {
+                const pt = points[i];
+                if (pt && !isNaN(pt.x) && !isNaN(pt.y)) {
+                    lastPoint = pt;
+                    break;
+                }
+            }
+
+            if (lastPoint) {
+                const {x, y} = lastPoint;
+                const color = dataset.borderColor || 'rgba(102, 126, 234, 0.85)';
+
+                // Pulsing animation math using real-time timestamp
+                const time = Date.now() / 1000;
+                const pulseRadius = 5 + Math.sin(time * 6) * 3.5;
+                const pulseOpacity = 0.35 + Math.sin(time * 6) * 0.15;
+
+                ctx.save();
+                
+                // Pulsing Halo
+                ctx.beginPath();
+                ctx.arc(x, y, pulseRadius, 0, 2 * Math.PI);
+                ctx.fillStyle = typeof color === 'string' 
+                    ? color.replace('0.85', pulseOpacity).replace('0.8', pulseOpacity) 
+                    : 'rgba(102, 126, 234, 0.3)';
+                ctx.fill();
+
+                // Solid white background ring
+                ctx.beginPath();
+                ctx.arc(x, y, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = '#ffffff';
+                ctx.fill();
+
+                // Small center color core
+                ctx.beginPath();
+                ctx.arc(x, y, 2.5, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+
+                ctx.restore();
+            }
+        });
+    }
+};
+
+// Start the pulsing animation loop for the active combined chart
+function startLivePulseLoop() {
+    const repaint = () => {
+        let activeRepaint = false;
+        if (charts.environmentalCombinedChart && document.getElementById('environmentalCombinedChart')) {
+            charts.environmentalCombinedChart.draw();
+            activeRepaint = true;
+        }
+        if (charts.timeChart && document.getElementById('timeChart')) {
+            charts.timeChart.draw();
+            activeRepaint = true;
+        }
+        if (activeRepaint) {
+            requestAnimationFrame(repaint);
+        } else {
+            setTimeout(startLivePulseLoop, 1000); // Retry later if charts not active yet
+        }
+    };
+    requestAnimationFrame(repaint);
 }
 
 // ========================
@@ -2122,7 +2172,12 @@ function updateChartsTheme() {
 function safeChartUpdate(chart, key = 'chart') {
     try {
         if (chart && typeof chart.update === 'function') {
-            chart.update('none'); // Use 'none' to prevent animations
+            // For live telemetry charts, use a smooth animation transition instead of 'none'
+            if (key === 'timeChart' || key === 'environmentalCombinedChart' || key === 'unifiedChart') {
+                chart.update(); // Smoothly animate updates
+            } else {
+                chart.update('none'); // No animation for heavy analytics
+            }
         }
     } catch (err) {
         console.error(`Chart update failed for ${key}:`, err);
@@ -3508,7 +3563,11 @@ function updateExtendedCharts(data) {
         return;
     }
 
-    const timestamps = timestampSource.map(t => new Date(t));
+    const timestamps = timestampSource.map(t => {
+        const normalized = typeof t === 'string' ? t.replace(' ', 'T') : t;
+        const d = new Date(normalized);
+        return isNaN(d.getTime()) ? new Date() : d;
+    });
     const seriesFrom = (primary, fallback, singleValue) => {
         if (Array.isArray(primary) && primary.length) return primary;
         if (Array.isArray(fallback) && fallback.length) return fallback;

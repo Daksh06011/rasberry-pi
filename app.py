@@ -2202,9 +2202,18 @@ def get_data():
                     "avg_tsp": to_float_or_none(avg_row["avg_tsp"]) if avg_row else None
                 }
 
+        def to_iso_str(ts):
+            """Convert timestamp to ISO 8601 string with T separator for browser compatibility"""
+            if ts is None:
+                return None
+            if isinstance(ts, str):
+                # Replace space with T for ISO 8601 compatibility
+                return ts.replace(' ', 'T') if ' ' in ts else ts
+            return ts.isoformat()
+
         if USE_SQLITE:
             history = {
-                "timestamps": [r[0] if isinstance(r[0], str) else r[0].isoformat() for r in history_rows],
+                "timestamps": [to_iso_str(r[0]) for r in history_rows],
                 "pm1": [to_float_or_none(r[1]) for r in history_rows],
                 "pm2_5": [to_float_or_none(r[2]) for r in history_rows],
                 "pm4": [to_float_or_none(r[3]) for r in history_rows],
@@ -2290,7 +2299,7 @@ def get_data():
                 extended_history_rows = []
                 for row in ext_rows:
                     extended_history_rows.append({
-                        'timestamp': row[0] if isinstance(row[0], str) else row[0].isoformat(),
+                        'timestamp': to_iso_str(row[0]),
                         'temperature_c': row[1],
                         'humidity_percent': row[2],
                         'pressure_hpa': row[3],
@@ -2399,7 +2408,7 @@ def get_data():
         if extended_history_rows:
             logging.info(f"[API] Adding extended history to response: {len(extended_history_rows)} rows")
             response["history"]["extended"] = {
-                "timestamps": [row['timestamp'] if isinstance(row, dict) else row[0] for row in extended_history_rows],
+                "timestamps": [to_iso_str(row['timestamp'] if isinstance(row, dict) else row[0]) for row in extended_history_rows],
                 "temperature_c": [to_float_or_none(row['temperature_c']) if isinstance(row, dict) else to_float_or_none(row[1]) for row in extended_history_rows],
                 "humidity_percent": [to_float_or_none(row['humidity_percent']) if isinstance(row, dict) else to_float_or_none(row[2]) for row in extended_history_rows],
                 "pressure_hpa": [to_float_or_none(row['pressure_hpa']) if isinstance(row, dict) else to_float_or_none(row[3]) for row in extended_history_rows],
