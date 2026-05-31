@@ -196,6 +196,45 @@ function parseMQTTPayload(payload) {
                 result.extended.gps_speed_kmh = gps.Speed_kmh;
             }
         }
+        // Handle final Waveshare format: {"site":"...", "location":{...}, "sky":{...}, "ads1115":{...}}
+        else if (data.ads1115 && data.sky) {
+            console.log('📡 Parsing final Waveshare MQTT format');
+            
+            let noise = null;
+            let no2 = null;
+            let voc = null;
+            
+            const channels = data.ads1115.channels || [];
+            channels.forEach(channel => {
+                const name = channel.name;
+                const val = channel.raw !== undefined ? channel.raw : channel.value;
+                if (name === 'SOUND') noise = val;
+                else if (name === 'NO2') no2 = val;
+                else if (name === 'VOC') voc = val;
+            });
+            
+            result.extended = {
+                temperature_c: data.temperature || data.temp || (data.tsi && data.tsi.temp),
+                humidity_percent: data.humidity || data.rh || (data.tsi && data.tsi.humidity),
+                pressure_hpa: data.pressure,
+                voc_ppb: voc,
+                no2_ppb: no2,
+                noise_db: noise,
+                lux: data.sky.lux,
+                cloud_cover_percent: data.sky.cloud_cover
+            };
+            
+            const pmRoot = data.PM_data || {};
+            const pmTsi = data.tsi || {};
+            result.sensor = {
+                timestamp: timestamp,
+                pm1: data.pm1 || pmRoot.PM1 || pmTsi.pm1,
+                pm2_5: data.pm2_5 || pmRoot.PM2_5 || pmTsi.pm25 || pmTsi.pm2_5,
+                pm4: data.pm4 || pmRoot.PM4 || pmTsi.pm4,
+                pm10: data.pm10 || pmRoot.PM10 || pmTsi.pm10,
+                tsp: data.tsp || pmRoot.TSP_um || pmTsi.tsp
+            };
+        }
         // Handle simple PM-only format
         else {
             console.log('📡 Parsing simple MQTT format (PM data only)');

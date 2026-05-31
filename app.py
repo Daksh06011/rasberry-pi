@@ -491,8 +491,11 @@ def process_extended_device_data(payload, device_id, timestamp, data_source_id):
         device_id_db = row[0]
         logging.info(f"[EXTENDED] Found device in DB with ID: {device_id_db}")
 
-        # Check if this is the new compact format
-        if "e" in payload and "pm" in payload and "g" in payload:
+        # Check if this is the new final Waveshare format
+        if "ads1115" in payload and "sky" in payload:
+            logging.info(f"[EXTENDED] Processing final Waveshare/ADS1115 format")
+            process_final_format_data(payload, device_id_db, timestamp, data_source_id, cur)
+        elif "e" in payload and "pm" in payload and "g" in payload:
             logging.info(f"[EXTENDED] Processing new compact format")
             process_compact_format_data(payload, device_id_db, timestamp, data_source_id, cur)
         elif "tsi_pm1" in payload or "tsi" in payload:
@@ -681,6 +684,101 @@ def process_compact_format_data(payload, device_id_db, timestamp, data_source_id
         logging.info(f"[COMPACT] Successfully inserted mirrored sensor data")
     except Exception as e:
         logging.warning(f"[COMPACT] Failed to write mirrored sensor row: {e}")
+
+def process_final_format_data(payload, device_id_db, timestamp, data_source_id, cur):
+    """Process the final Waveshare format with sky, ads1115, and tsi structures"""
+    logging.info(f"[WAVESHARE] Processing final Waveshare format data for device: {device_id_db}")
+
+    # Extract time
+    ts_str = payload.get("ts")
+    if ts_str:
+        try:
+            timestamp = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception as e:
+            try:
+                # Fallback to ISO format parsing
+                if ts_str.endswith('Z'):
+                    ts_str = ts_str[:-1] + '+00:00'
+                timestamp = datetime.fromisoformat(ts_str)
+            except Exception as e2:
+                logging.warning(f"[WAVESHARE] Invalid timestamp: {ts_str} - using server time: {e2}")
+
+    # Extract location
+    loc = payload.get("location", {})
+    gps_lat = loc.get("lat")
+    gps_lon = loc.get("lon")
+    gps_alt = loc.get("alt")
+    gps_speed = loc.get("speed")
+
+    # Extract sky
+    sky = payload.get("sky", {})
+    lux = sky.get("lux")
+    cloud_cover = sky.get("cloud_cover")
+
+    # Extract temperature, humidity, and pressure if present in sub-nodes
+    temperature = payload.get("temperature") or payload.get("temp") or payload.get("tsi_temp")
+    humidity = payload.get("humidity") or payload.get("rh") or payload.get("tsi_rh")
+    pressure = payload.get("pressure") or payload.get("pressure_hpa")
+
+    # Extract ADS1115 channels (SOUND, NO2, VOC)
+    ads = payload.get("ads1115", {})
+    noise_db = None
+    no2 = None
+    voc = None
+
+    channels = ads.get("channels", [])
+    for channel in channels:
+        name = channel.get("name")
+        val = channel.get("raw") if channel.get("raw") is not None else channel.get("value")
+        if name == "SOUND":
+            noise_db = val
+        elif name == "NO2":
+            no2 = val
+        elif name == "VOC":
+            voc = val
+
+    # Extract PM data from root or TSI sub-node
+    pm_root = payload.get("PM_data", {})
+    pm1 = payload.get("pm1") or payload.get("tsi_pm1") or pm_root.get("PM1") or payload.get("tsi", {}).get("pm1")
+    pm2_5 = payload.get("pm2_5") or payload.get("tsi_pm25") or pm_root.get("PM2_5") or payload.get("tsi", {}).get("pm25") or payload.get("tsi", {}).get("pm2_5")
+    pm4 = payload.get("pm4") or payload.get("tsi_pm4") or pm_root.get("PM4") or payload.get("tsi", {}).get("pm4")
+    pm10 = payload.get("pm10") or payload.get("tsi_pm10") or pm_root.get("PM10") or payload.get("tsi", {}).get("pm10")
+    tsp_um = payload.get("tsp") or pm_root.get("TSP_um") or payload.get("tsi", {}).get("tsp")
+
+    # Extract battery percentage
+    battery_percent = payload.get("wifi", {}).get("battery") or payload.get("battery")
+
+    logging.info(f"[WAVESHARE] Mapped: Temp={temperature}, Humid={humidity}, Lat={gps_lat}, Lon={gps_lon}, NO2={no2}, VOC={voc}, Noise={noise_db}, PM2.5={pm2_5}")
+
+    # Insert into database
+    insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, pressure,
+                     voc, no2, noise_db, pm1, pm2_5, pm4, pm10, tsp_um,
+                     gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover,
+                     lux, None, battery_percent)
+
+    # Insert into standard sensor data table for dynamic chart rendering
+    if pm1 is not None or pm2_5 is not None or pm10 is not None:
+        try:
+            cur.execute(
+                """
+                INSERT INTO dust_sensor_data
+                (timestamp, device_id, data_source_id, pm1, pm2_5, pm4, pm10, tsp)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    timestamp,
+                    device_id_db,
+                    data_source_id,
+                    float(pm1) if pm1 is not None else None,
+                    float(pm2_5) if pm2_5 is not None else None,
+                    float(pm4) if pm4 is not None else None,
+                    float(pm10) if pm10 is not None else None,
+                    float(tsp_um) if tsp_um is not None else None,
+                ),
+            )
+            logging.info(f"[WAVESHARE] Successfully inserted mirrored sensor data")
+        except Exception as e:
+            logging.warning(f"[WAVESHARE] Failed to write mirrored sensor row: {e}")
 
 def process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur):
     """Process data coming from HiveMQ in the new specific format"""
