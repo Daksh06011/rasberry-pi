@@ -490,22 +490,23 @@ let mqttLiveSeries = {
     pm10: []
 };
 
-// Color schemes for all parameters
+// Color schemes for all parameters - Curated premium HSL-tailored colors
 const colorScheme = {
-    pm1: 'rgba(255, 99, 132, 0.8)',
-    pm2_5: 'rgba(54, 162, 235, 0.8)',
-    pm4: 'rgba(75, 192, 192, 0.8)',
-    pm10: 'rgba(255, 206, 86, 0.8)',
-    tsp: 'rgba(153, 102, 255, 0.8)',
-    temperature: 'rgba(255, 159, 64, 0.8)',
-    humidity: 'rgba(99, 255, 132, 0.8)',
-    pressure: 'rgba(132, 99, 255, 0.8)',
-    voc: 'rgba(255, 206, 86, 0.8)',
-    no2: 'rgba(255, 99, 159, 0.8)',
-    noise: 'rgba(159, 99, 255, 0.8)',
-    speed: 'rgba(64, 159, 255, 0.8)',
-    cloud: 'rgba(192, 192, 192, 0.8)'
+    pm1: 'rgba(99, 102, 241, 0.85)',       // Indigo
+    pm2_5: 'rgba(16, 185, 129, 0.85)',     // Emerald
+    pm4: 'rgba(6, 182, 212, 0.85)',        // Cyan
+    pm10: 'rgba(245, 158, 11, 0.85)',       // Amber
+    tsp: 'rgba(139, 92, 246, 0.85)',       // Violet
+    temperature: 'rgba(244, 63, 94, 0.85)', // Rose
+    humidity: 'rgba(20, 184, 166, 0.85)',    // Teal
+    pressure: 'rgba(14, 165, 233, 0.85)',    // Sky Blue
+    voc: 'rgba(168, 85, 247, 0.85)',        // Purple
+    no2: 'rgba(217, 70, 239, 0.85)',        // Pink
+    noise: 'rgba(249, 115, 22, 0.85)',       // Coral/Orange
+    speed: 'rgba(100, 116, 139, 0.85)',      // Slate
+    cloud: 'rgba(156, 163, 175, 0.85)'       // Gray
 };
+
 
 // ========================
 // THEME MANAGEMENT (Enhanced from your existing)
@@ -1301,7 +1302,11 @@ function initializeCharts() {
         scales: {
             y: {
                 beginAtZero: true,
-                grid: { color: chartGridColor },
+                grid: { 
+                    color: chartGridColor,
+                    borderDash: [5, 5],
+                    drawBorder: false
+                },
                 ticks: { 
                     color: chartTextColor,
                     precision: 0,
@@ -1310,7 +1315,11 @@ function initializeCharts() {
                 }
             },
             x: {
-                grid: { color: chartGridColor },
+                grid: { 
+                    color: chartGridColor,
+                    borderDash: [5, 5],
+                    drawBorder: false
+                },
                 ticks: { color: chartTextColor }
             }
         }
@@ -1366,7 +1375,8 @@ function initializeCharts() {
                         max: 250, // Fixed maximum for PM levels
                         grid: {
                             color: chartGridColor,
-                            drawBorder: true
+                            drawBorder: false,
+                            borderDash: [5, 5]
                         },
                         ticks: {
                             color: chartTextColor,
@@ -1400,7 +1410,8 @@ function initializeCharts() {
                         },
                         grid: {
                             color: chartGridColor,
-                            drawBorder: true
+                            drawBorder: false,
+                            borderDash: [5, 5]
                         },
                         ticks: {
                             color: chartTextColor,
@@ -1446,19 +1457,27 @@ function safeChartUpdate(chart, key = 'chart') {
         }
     }
 }
-// Helper function to create dataset config (your existing)
+// Helper function to create dataset config (your existing + premium visuals)
 function createDatasetConfig(label, borderColor) {
+    const bgOpacity = '0.04'; // faint professional glow
+    let backgroundColor = borderColor;
+    if (typeof borderColor === 'string') {
+        backgroundColor = borderColor.replace('0.85', bgOpacity).replace('0.8', bgOpacity);
+    }
     return {
         label,
         data: [],
         borderColor,
-        backgroundColor: borderColor.replace('0.8', '0.08'),
-        borderWidth: 3,
-        pointRadius: 4,
-        pointHoverRadius: 8,
+        backgroundColor,
+        borderWidth: 2,               // sleek, sharp border strokes
+        pointRadius: 0,               // hides circles on default view to eliminate visual clutter
+        pointHoverRadius: 6,          // highlights specific point beautifully on cursor hover
+        pointHoverBackgroundColor: borderColor,
+        pointHoverBorderColor: '#fff',
+        pointHoverBorderWidth: 2,
         pointStyle: 'circle',
-        tension: 0.25,
-        fill: false
+        tension: 0.4,                 // elegant smooth curve calculations
+        fill: true                    // enables the fading area under line curves
     };
 }
 
@@ -1497,24 +1516,38 @@ function initializeExtendedCharts() {
                 ...commonOptions,
                 interaction: { mode: 'index', intersect: false },
                 scales: {
-                    x: { type: 'time' },
+                    x: { 
+                        type: 'time',
+                        grid: {
+                            color: chartGridColor,
+                            borderDash: [5, 5],
+                            drawBorder: false
+                        }
+                    },
                     'y-pm': {
                         type: 'linear',
                         position: 'left',
                         min: 0,
-                        title: { display: true, text: 'PM Levels (μg/m³)' }
+                        title: { display: true, text: 'PM Levels (μg/m³)' },
+                        grid: {
+                            color: chartGridColor,
+                            borderDash: [5, 5],
+                            drawBorder: false
+                        }
                     },
                     'y-temp': {
                         type: 'linear',
                         position: 'right',
                         min: 0,
-                        title: { display: true, text: 'Temp / Humidity' }
+                        title: { display: true, text: 'Temp / Humidity' },
+                        grid: { drawOnChartArea: false }
                     },
                     'y-humid': {
                         type: 'linear',
                         position: 'left',
                         min: 0,
-                        display: false
+                        display: false,
+                        grid: { drawOnChartArea: false }
                     },
                     'y-pressure': {
                         type: 'linear',
@@ -1579,29 +1612,13 @@ function initializeExtendedCharts() {
                 labels: [],
                 datasets: [
                     // PM datasets
-                    { ...createDatasetConfig('PM1', colorScheme.pm1), yAxisID: 'y-pm', tension: 0.4 },
-                    { ...createDatasetConfig('PM2.5', colorScheme.pm2_5), yAxisID: 'y-pm', tension: 0.4 },
-                    { ...createDatasetConfig('PM4', colorScheme.pm4), yAxisID: 'y-pm', tension: 0.4 },
-                    { ...createDatasetConfig('PM10', colorScheme.pm10), yAxisID: 'y-pm', tension: 0.4 },
-                    // Environmental datasets
-                    { 
-                        label: 'Temperature (°C)', 
-                        data: [], 
-                        borderColor: 'rgba(255, 99, 132, 0.8)',
-                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
-                        yAxisID: 'y-temp',
-                        tension: 0.4,
-                        borderWidth: 2
-                    },
-                    {
-                        label: 'Humidity (%)',
-                        data: [],
-                        borderColor: 'rgba(54, 162, 235, 0.8)',
-                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
-                        yAxisID: 'y-humid',
-                        tension: 0.4,
-                        borderWidth: 2
-                    }
+                    { ...createDatasetConfig('PM1', colorScheme.pm1), yAxisID: 'y-pm' },
+                    { ...createDatasetConfig('PM2.5', colorScheme.pm2_5), yAxisID: 'y-pm' },
+                    { ...createDatasetConfig('PM4', colorScheme.pm4), yAxisID: 'y-pm' },
+                    { ...createDatasetConfig('PM10', colorScheme.pm10), yAxisID: 'y-pm' },
+                    // Environmental datasets - using premium dataset helper
+                    { ...createDatasetConfig('Temperature (°C)', colorScheme.temperature), yAxisID: 'y-temp' },
+                    { ...createDatasetConfig('Humidity (%)', colorScheme.humidity), yAxisID: 'y-humid' }
                 ]
             },
             options: {
@@ -1626,23 +1643,38 @@ function initializeExtendedCharts() {
                     legend: { position: 'top', labels: { usePointStyle: true, padding: 15 } }
                 },
                 scales: {
-                    x: { type: 'time', display: true },
+                    x: { 
+                        type: 'time', 
+                        display: true,
+                        grid: {
+                            color: chartGridColor,
+                            borderDash: [5, 5],
+                            drawBorder: false
+                        }
+                    },
                     'y-pm': {
                         type: 'linear',
                         display: true,
                         position: 'left',
-                        title: { display: true, text: 'PM Levels (μg/m³)' }
+                        title: { display: true, text: 'PM Levels (μg/m³)' },
+                        grid: {
+                            color: chartGridColor,
+                            borderDash: [5, 5],
+                            drawBorder: false
+                        }
                     },
                     'y-temp': {
                         type: 'linear',
                         display: true,
                         position: 'right',
-                        title: { display: true, text: 'Temperature (°C)' }
+                        title: { display: true, text: 'Temperature (°C)' },
+                        grid: { drawOnChartArea: false }
                     },
                     'y-humid': {
                         type: 'linear',
                         display: false,
-                        position: 'right'
+                        position: 'right',
+                        grid: { drawOnChartArea: false }
                     }
                 }
             }
