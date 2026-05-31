@@ -770,7 +770,7 @@ def on_mqtt_message(client, userdata, msg):
         logging.info(f"[MQTT] msg topic={msg.topic}, payload={msg.payload[:200]}")
 
         # Process message based on topic
-        if msg.topic.endswith("data"):
+        if msg.topic.endswith("data") or msg.topic.endswith("dashboard") or "devices" in msg.topic:
             logging.info(f"[MQTT] Processing message for device: {device_id}")
             logging.info(f"[MQTT] Payload keys: {list(payload.keys())}")
             logging.info(f"[MQTT] Payload sample: {str(payload)[:500]}")
@@ -833,7 +833,7 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                 timestamp = datetime.now(timezone.utc)
                 data_source_id_local = userdata['data_source_id']
 
-                if msg.topic.endswith("data"):
+                if msg.topic.endswith("data") or msg.topic.endswith("dashboard") or "devices" in msg.topic:
                     # Check for compact format
                     is_compact_format = "e" in payload and "pm" in payload and "g" in payload
                     has_pm_data = "PM_data" in payload
@@ -943,7 +943,7 @@ def initialize_mqtt_clients():
                 # Use standard threading instead of eventlet for Railway compatibility
                 thread = threading.Thread(
                     target=start_mqtt_client,
-                    args=(data_source_id, broker_url, ['sensor/data', 'dustrak/status'], username, password),
+                    args=(data_source_id, broker_url, ['sensor/data', 'dustrak/status', 'xiao/dashboard'], username, password),
                     daemon=True,
                     name=f"MQTT-{data_source_id}"
                 )
@@ -1198,6 +1198,12 @@ def emit_websocket_update(device_id):
         def safe_avg(values):
             return sum(values) / len(values) if values else 0
 
+        def safe_isoformat(ts):
+            if not ts: return ""
+            if isinstance(ts, datetime): return ts.isoformat()
+            if isinstance(ts, str): return ts.replace(' ', 'T')
+            return str(ts)
+
 
 
         cur.execute("SELECT has_relay FROM dust_devices WHERE id = %s", (device_id,))
@@ -1206,13 +1212,23 @@ def emit_websocket_update(device_id):
 
 
         # Get chart data (last 15 minutes)
-        cur.execute("""
-            SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
-            FROM dust_sensor_data
-            WHERE device_id = %s
-            AND timestamp >= NOW() - INTERVAL '15 minutes'
-            ORDER BY timestamp ASC
-        """, (device_id,))
+        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=15)
+        if USE_SQLITE:
+            cur.execute("""
+                SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
+                FROM dust_sensor_data
+                WHERE device_id = %s
+                AND timestamp >= %s
+                ORDER BY timestamp ASC
+            """, (device_id, cutoff_time.isoformat()))
+        else:
+            cur.execute("""
+                SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
+                FROM dust_sensor_data
+                WHERE device_id = %s
+                AND timestamp >= NOW() - INTERVAL '15 minutes'
+                ORDER BY timestamp ASC
+            """, (device_id,))
         chart_data = cur.fetchall()
 
         avg_pm1 = safe_avg([float(r['pm1']) for r in chart_data if r['pm1'] is not None])
@@ -1261,7 +1277,7 @@ def emit_websocket_update(device_id):
                 'device_id': device_id,
                 'sensor': {
                     **latest_sensor,
-                    'timestamp': latest_sensor['timestamp'].isoformat(),
+                    'timestamp': safe_isoformat(latest_sensor['timestamp']),
                     'avg_pm1': avg_pm1,
                     'avg_pm2_5': avg_pm2_5,
                     'avg_pm4': avg_pm4,
@@ -1269,7 +1285,7 @@ def emit_websocket_update(device_id):
                     'avg_tsp': avg_tsp
                 } if latest_sensor else {},
                 'history': {
-                    "timestamps": [row['timestamp'].isoformat() for row in chart_data],
+                    "timestamps": [safe_isoformat(row['timestamp']) for row in chart_data],
                     "pm1": [float(row['pm1']) if row['pm1'] else 0 for row in chart_data],
                     "pm2_5": [float(row['pm2_5']) if row['pm2_5'] else 0 for row in chart_data],
                     "pm4": [float(row['pm4']) if row['pm4'] else 0 for row in chart_data],
@@ -1576,7 +1592,7 @@ def add_data_source(source_type: str, source_config: dict):
 
         # Start MQTT client if source type is MQTT
         if source_type == 'mqtt':
-            t = threading.Thread(target=start_mqtt_client, args=(data_source_id, source_config['broker_url'], ['sensor/data', 'dustrak/status'], source_config.get('username'), source_config.get('password')), daemon=True)
+            t = threading.Thread(target=start_mqtt_client, args=(data_source_id, source_config['broker_url'], ['sensor/data', 'dustrak/status', 'xiao/dashboard'], source_config.get('username'), source_config.get('password')), daemon=True)
             t.start()
 
         return data_source_id
@@ -2979,200 +2995,7 @@ if __name__ == '__main__':
         traceback.print_exc()
         sys.exit(1)
 
-@app.route('/api/force_admin')
-def force_admin():
-    try:
-        conn = get_db_connection()
-        cur = get_db_cursor(conn)
-        admin_hash = generate_password_hash('admin123')
-        cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
-        if cur.fetchone():
-            cur.execute("UPDATE dust_users SET password_hash = %s WHERE username = 'admin'", (admin_hash,))
-        else:
-            cur.execute("INSERT INTO dust_users (username, email, password_hash, is_admin) VALUES ('admin', 'admin@example.com', %s, TRUE)", (admin_hash,))
-            
-        # Query sensor data
-        sensor_query = """
-            SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
-            FROM dust_sensor_data
-            WHERE device_id = %s AND timestamp BETWEEN %s AND %s
-            ORDER BY timestamp ASC
-        """
-        if USE_SQLITE: sensor_query = sensor_query.replace('%s', '?')
-        cur.execute(sensor_query, (device_id, start_datetime, end_datetime))
-        sensor_data = cur.fetchall()
 
-        # Query extended data (without removed fields)
-        extended_query = """
-            SELECT timestamp, temperature_c, humidity_percent, pressure_hpa,
-                   voc_ppb, no2_ppb, noise_db, gps_lat, gps_lon, lux, uv_index
-            FROM dust_extended_data
-            WHERE device_id = %s AND timestamp BETWEEN %s AND %s
-            ORDER BY timestamp ASC
-        """
-        if USE_SQLITE: extended_query = extended_query.replace('%s', '?')
-        cur.execute(extended_query, (device_id, start_datetime, end_datetime))
-        extended_data = cur.fetchall()
-
-        if not sensor_data and not extended_data:
-            return make_response(f"""
-            <html><body>
-            <h1>Export Error</h1>
-            <p>No data found for the selected date range</p>
-            <script>window.close();</script>
-            </body></html>
-            """, 404)
-
-        si = io.StringIO()
-        cw = csv.writer(si)
-
-        # Updated headers (removed unwanted fields)
-        headers = [
-            "Timestamp", "PM1", "PM2.5", "PM4", "PM10", "TSP",
-            "Temperature_C", "Humidity_%", "Pressure_hPa",
-            "VOC_ppb", "NO2_ppb", "Noise_db",
-            "GPS_Lat", "GPS_Lon", "Lux", "UV_Index"
-        ]
-        cw.writerow(headers)
-
-        # Merge data by timestamp
-        data_by_timestamp = {}
-
-        for row in sensor_data:
-            ts = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
-            data_by_timestamp[ts] = {
-                'pm1': row[1] or 0,
-                'pm2_5': row[2] or 0,
-                'pm4': row[3] or 0,
-                'pm10': row[4] or 0,
-                'tsp': row[5] or 0,
-                'temperature_c': None,
-                'humidity_percent': None,
-                'pressure_hpa': None,
-                'voc_ppb': None,
-                'no2_ppb': None,
-                'noise_db': None,
-                'gps_lat': None,
-                'gps_lon': None,
-                'lux': None,
-                'uv_index': None
-            }
-
-        for row in extended_data:
-            ts = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
-            if ts not in data_by_timestamp:
-                data_by_timestamp[ts] = {
-                    'pm1': 0, 'pm2_5': 0, 'pm4': 0, 'pm10': 0, 'tsp': 0,
-                    'temperature_c': None, 'humidity_percent': None, 'pressure_hpa': None,
-                    'voc_ppb': None, 'no2_ppb': None, 'noise_db': None,
-                    'gps_lat': None, 'gps_lon': None, 'lux': None, 'uv_index': None
-                }
-
-            data_by_timestamp[ts].update({
-                'temperature_c': row[1],
-                'humidity_percent': row[2],
-                'pressure_hpa': row[3],
-                'voc_ppb': row[4],
-                'no2_ppb': row[5],
-                'noise_db': row[6],
-                'gps_lat': row[7],
-                'gps_lon': row[8],
-                'lux': row[9],
-                'uv_index': row[10]
-            })
-
-        sorted_timestamps = sorted(data_by_timestamp.keys())
-        for ts in sorted_timestamps:
-            r = data_by_timestamp[ts]
-            cw.writerow([
-                ts, r['pm1'], r['pm2_5'], r['pm4'], r['pm10'], r['tsp'],
-                r['temperature_c'], r['humidity_percent'], r['pressure_hpa'],
-                r['voc_ppb'], r['no2_ppb'], r['noise_db'],
-                r['gps_lat'], r['gps_lon'], r['lux'], r['uv_index']
-            ])
-
-        output = make_response(si.getvalue())
-        filename = f"dust_data_{device_id}_{start_date}_to_{end_date}.csv"
-        output.headers["Content-Disposition"] = f"attachment; filename={filename}"
-        output.headers["Content-type"] = "text/csv; charset=utf-8"
-
-        logging.info(f"CSV exported: {filename} - {len(sorted_timestamps)} records")
-        return output
-
-    except Exception as e:
-        logging.error(f"Error exporting CSV: {e}")
-        return make_response(f"""
-        <html><body>
-        <h1>Export Error</h1>
-        <p>An error occurred while exporting data</p>
-        <p>Details: {str(e)}</p>
-        <script>window.close();</script>
-        </body></html>
-        """, 500)
-
-    finally:
-        if conn:
-            put_db_connection(conn)
-
-
-@socketio.on('join')
-def handle_join(data):
-    device_id = data.get('device_id')
-    user_id = data.get('user_id')
-
-    if device_id and user_id:
-        room_name = f"user_{user_id}_device_{device_id}"
-        join_room(room_name)
-        logging.info(f'Joined room: {room_name}')
-        emit('message', {'status': f'Joined {room_name}'})
-
-@socketio.on('leave')
-def handle_leave(data):
-    device_id = data.get('device_id')
-    user_id = data.get('user_id')
-
-    if device_id and user_id:
-        room_name = f"user_{user_id}_device_{device_id}"  # Match join format
-        leave_room(room_name)
-        logging.info(f'Left room: {room_name}')
-        emit('message', {'status': f'Left {room_name}'})
-
-def emit_device_update(device_id, data):
-    socketio.emit('new_data', data, room=f'device_{device_id}')
-
-
-# Initialize MQTT clients when module is imported (for Railway)
-logging.info("[STARTUP] 🚀 Railway Flask app initialization...")
-logging.info("[STARTUP] Environment check:")
-logging.info(f"[STARTUP]   RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT', 'NOT SET')}")
-logging.info(f"[STARTUP]   DATABASE_URL: {'SET' if os.getenv('DATABASE_URL') else 'NOT SET'}")
-logging.info(f"[STARTUP]   PORT: {os.getenv('PORT', 'NOT SET')}")
-
-logging.info("[STARTUP] 🗄️ Initializing database...")
-initialize_database()
-
-logging.info("[STARTUP] 📡 Initializing MQTT clients...")
-initialize_mqtt_clients()
-
-logging.info("[STARTUP] ✨ Railway Flask app ready!")
-
-if __name__ == '__main__':
-    # Local development startup
-    try:
-        logging.info("[LOCAL] Starting Flask application for local development...")
-        socketio.run(app,
-                host=os.getenv('FLASK_HOST', '0.0.0.0'),
-                port=int(os.getenv('FLASK_PORT', 5000)),
-                debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true',
-                use_reloader=False,
-                allow_unsafe_werkzeug=True)
-    except KeyboardInterrupt:
-        logging.info("[LOCAL] Application shutting down...")
-    except Exception as e:
-        logging.error(f"[LOCAL] 💥 Application startup failed: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
 
 @app.route('/api/force_admin')
 def force_admin():

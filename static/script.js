@@ -2,8 +2,44 @@
 // Preserves all existing functionality + adds new enhanced features
 
 // ========================
-// GLOBAL VARIABLES
+// GLOBAL VARIABLES & API CONFIG
 // ========================
+
+// API Configuration for decoupled frontend
+// Use an injected runtime value `window.__BACKEND_URL` when available (Vercel can inject at build),
+// fall back to localhost during development, otherwise use relative paths so Vercel can proxy `/api`.
+const API_BASE_URL = window.__BACKEND_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname ? 'http://127.0.0.1:5000' : 'https://reasonable-wonder-production-c57e.up.railway.app');
+
+/**
+ * Wrapper for fetch that automatically adds API_BASE_URL and Authorization headers
+ */
+async function apiFetch(endpoint, options = {}) {
+    const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
+    
+    // Add auth header
+    const token = localStorage.getItem('access_token');
+    if (token) {
+        options.headers = {
+            ...options.headers,
+            'Authorization': `Bearer ${token}`
+        };
+    }
+
+    try {
+        const response = await fetch(url, options);
+        if (response.status === 401) {
+            // Unauthorized - clear token and redirect to login
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('user_data');
+            window.location.href = 'login.html';
+            return null;
+        }
+        return response;
+    } catch (error) {
+        console.error('API Fetch error:', error);
+        throw error;
+    }
+}
 
 // Existing variables (preserved)
 let currentAvgWindow = 15;
@@ -328,7 +364,7 @@ function initializeWebSocket() {
         const host = window.location.host;
 
         // Initialize socket connection with Railway-compatible settings
-        socket = io('/', {
+        socket = io(API_BASE_URL, {
             transports: ['polling', 'websocket'], // Try polling first, then websocket
             reconnection: true,
             reconnectionAttempts: 3, // Reduce reconnection attempts
@@ -622,8 +658,36 @@ function initializeTemperatureDisplay() {
 // DEVICE SELECTION (Enhanced)
 // ========================
 
-function initializeDeviceSelection() {
+async function initializeDeviceSelection() {
     const deviceSelect = document.getElementById('deviceSelect');
+    if (!deviceSelect) return;
+
+    try {
+        const response = await apiFetch('/api/user/devices');
+        if (response) {
+            const data = await response.json();
+            if (data.success && data.devices) {
+                // Clear existing except first
+                while (deviceSelect.options.length > 1) {
+                    deviceSelect.remove(1);
+                }
+                
+                // Add fetched devices
+                data.devices.forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.id;
+                    option.textContent = device.name || device.deviceid;
+                    option.setAttribute('data-deviceid', device.deviceid);
+                    option.setAttribute('data-name', device.name || '');
+                    option.setAttribute('data-type', device.source_type === 'mqtt' ? 'extended' : 'basic');
+                    option.setAttribute('data-relay', device.has_relay ? 'True' : 'False');
+                    deviceSelect.appendChild(option);
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error fetching devices:', error);
+    }
 
     // Trigger initial selection if a device is pre-selected
     if (deviceSelect && deviceSelect.value) {
@@ -717,15 +781,27 @@ function getParameterLabel(param) {
 
 function joinDeviceRoom(deviceId) {
     if (socket && socket.connected) {
+        // Parse user_id from local storage
+        const userDataStr = localStorage.getItem('user_data');
+        let userId = null;
+        if (userDataStr) {
+            try {
+                const userData = JSON.parse(userDataStr);
+                userId = userData.id;
+            } catch (e) {
+                console.error('Error parsing user data:', e);
+            }
+        }
+
         // Leave previous room
         if (currentDeviceRoom && currentDeviceRoom !== deviceId) {
-            socket.emit('leave', { device_id: currentDeviceRoom });
+            socket.emit('leave', { device_id: currentDeviceRoom, user_id: userId });
         }
         
         // Join new room
-        socket.emit('join', { device_id: deviceId });
+        socket.emit('join', { device_id: deviceId, user_id: userId });
         currentDeviceRoom = deviceId;
-        console.log(`Joined room for device: ${deviceId}`);
+        console.log(`Joined room for device: ${deviceId}, user: ${userId}`);
     }
 }
 
@@ -744,7 +820,7 @@ async function initializeDeviceSelectionMap() {
     }
 
     async function fetchLocations() {
-        const res = await fetch('/api/device_locations');
+        const res = await apiFetch('/api/device_locations');
         const json = await res.json();
         return json.devices || [];
     }
@@ -1021,9 +1097,7 @@ function loadEnvironmentalDataCards() {
     }
 
     // Fetch live data from backend API
-    fetch(`/api/data?hours=1&deviceid=${currentDeviceId}`, {
-        credentials: 'same-origin'
-    })
+    apiFetch(`/api/data?hours=1&deviceid=${currentDeviceId}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -1995,9 +2069,7 @@ function fetchData(hours = 24) {
 
     const loadingIndicator = showLoading();
     
-    fetch(`/api/data?hours=${encodeURIComponent(hours)}&avg_window=${encodeURIComponent(currentAvgWindow)}&deviceid=${encodeURIComponent(currentDeviceId)}`, {
-        credentials: 'same-origin'
-    })
+    apiFetch(`/api/data?hours=${encodeURIComponent(hours)}&avg_window=${encodeURIComponent(currentAvgWindow)}&deviceid=${encodeURIComponent(currentDeviceId)}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -2341,7 +2413,7 @@ function updateParameterTrendChart(parameter) {
     if (!currentDeviceId) return;
     
     // Fetch current data and update chart
-    fetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             if (charts.paramTrendChart && data.history) {
@@ -2365,7 +2437,7 @@ function updateCorrelationChart() {
     
     if (!paramX || !paramY || !currentDeviceId) return;
     
-    fetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             if (charts.correlationScatter && data.history) {
@@ -2396,7 +2468,7 @@ function updateCorrelationChart() {
 function updateHistogramChart(parameter) {
     if (!currentDeviceId) return;
     
-    fetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             if (charts.histogramChart && data.history) {
@@ -2762,11 +2834,11 @@ function joinDeviceRoom(deviceId) {
     if (socket && socket.connected) {
         // Leave previous room
         if (currentDeviceRoom && currentDeviceRoom !== deviceId) {
-            socket.emit('leave', { device_id: currentDeviceRoom });
+            socket.emit('leave', { device_id: currentDeviceRoom , user_id: JSON.parse(localStorage.getItem('user_data') || '{}').id });
         }
         
         // Join new room
-        socket.emit('join', { device_id: deviceId });
+        socket.emit('join', { device_id: deviceId , user_id: JSON.parse(localStorage.getItem('user_data') || '{}').id });
         currentDeviceRoom = deviceId;
         console.log(`Joined room for device: ${deviceId}`);
     }
@@ -2849,7 +2921,7 @@ function setupRelayControls() {
                 return;
             }
             
-            fetch('/api/relay_control', {
+            apiFetch('/api/relay_control', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ device_id: currentDeviceId, state: 'ON' })
@@ -2878,7 +2950,7 @@ function setupRelayControls() {
                 return;
             }
             
-            fetch('/api/relay_control', {
+            apiFetch('/api/relay_control', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ device_id: currentDeviceId, state: 'OFF' })
@@ -3560,11 +3632,11 @@ function initializeDeviceQuickActions() {
 
 function joinDeviceRoom(deviceId) {
     if (currentDeviceRoom && socket) {
-        socket.emit('leave', { device_id: currentDeviceRoom });
+        socket.emit('leave', { device_id: currentDeviceRoom , user_id: JSON.parse(localStorage.getItem('user_data') || '{}').id });
     }
     
     if (socket && deviceId) {
-        socket.emit('join', { device_id: deviceId });
+        socket.emit('join', { device_id: deviceId , user_id: JSON.parse(localStorage.getItem('user_data') || '{}').id });
         currentDeviceRoom = deviceId;
     }
 }
@@ -3776,7 +3848,7 @@ function controlRelay(state) {
         return;
     }
     
-    fetch('/api/relay_control', {
+    apiFetch('/api/relay_control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3812,7 +3884,7 @@ function updateAutoMode() {
         return;
     }
     
-    fetch('/api/relay_control', {
+    apiFetch('/api/relay_control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4062,7 +4134,7 @@ function updateThresholds() {
         tsp: parseFloat(document.getElementById('threshold_tsp').value)
     };
     
-    fetch(`/api/update_thresholds?deviceid=${encodeURIComponent(currentDeviceId)}`, {
+    apiFetch(`/api/update_thresholds?deviceid=${encodeURIComponent(currentDeviceId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(thresholds)
@@ -4470,7 +4542,7 @@ window.testAPIData = function() {
     }
 
     console.log('📡 Fetching data from API...');
-    fetch(`/api/data?hours=1&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=1&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             console.log('📊 API Response:', data);

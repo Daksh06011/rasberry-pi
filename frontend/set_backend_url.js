@@ -1,8 +1,9 @@
 // Runtime backend URL placeholder
-// Replace the value below with your deployed backend URL (no trailing slash),
-// or let Vercel/Git host replace this file at deploy time.
-window.__BACKEND_URL = 'https://reasonable-wonder-production-c57e.up.railway.app';
-
-// Example: window.__BACKEND_URL = 'https://my-backend.up.railway.app'
+// Dynamically check if running locally or on production
+if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname) {
+    window.__BACKEND_URL = 'http://127.0.0.1:5000';
+} else {
+    window.__BACKEND_URL = 'https://reasonable-wonder-production-c57e.up.railway.app';
+}
 
 console.info('[INIT] backend URL set to', window.__BACKEND_URL);

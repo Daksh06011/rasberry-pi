@@ -8,7 +8,7 @@
 // API Configuration for decoupled frontend
 // Use an injected runtime value `window.__BACKEND_URL` when available (Vercel can inject at build),
 // fall back to localhost during development, otherwise use relative paths so Vercel can proxy `/api`.
-const API_BASE_URL = 'https://reasonable-wonder-production-c57e.up.railway.app';
+const API_BASE_URL = window.__BACKEND_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname ? 'http://127.0.0.1:5000' : 'https://reasonable-wonder-production-c57e.up.railway.app');
 
 /**
  * Wrapper for fetch that automatically adds API_BASE_URL and Authorization headers
@@ -364,7 +364,7 @@ function initializeWebSocket() {
         const host = window.location.host;
 
         // Initialize socket connection with Railway-compatible settings
-        socket = io('/', {
+        socket = io(API_BASE_URL, {
             transports: ['polling', 'websocket'], // Try polling first, then websocket
             reconnection: true,
             reconnectionAttempts: 3, // Reduce reconnection attempts
@@ -679,7 +679,7 @@ async function initializeDeviceSelection() {
                     option.textContent = device.name || device.deviceid;
                     option.setAttribute('data-deviceid', device.deviceid);
                     option.setAttribute('data-name', device.name || '');
-                    option.setAttribute('data-type', device.source_type || 'basic');
+                    option.setAttribute('data-type', device.source_type === 'mqtt' ? 'extended' : 'basic');
                     option.setAttribute('data-relay', device.has_relay ? 'True' : 'False');
                     deviceSelect.appendChild(option);
                 });
@@ -781,15 +781,27 @@ function getParameterLabel(param) {
 
 function joinDeviceRoom(deviceId) {
     if (socket && socket.connected) {
+        // Parse user_id from local storage
+        const userDataStr = localStorage.getItem('user_data');
+        let userId = null;
+        if (userDataStr) {
+            try {
+                const userData = JSON.parse(userDataStr);
+                userId = userData.id;
+            } catch (e) {
+                console.error('Error parsing user data:', e);
+            }
+        }
+
         // Leave previous room
         if (currentDeviceRoom && currentDeviceRoom !== deviceId) {
-            socket.emit('leave', { device_id: currentDeviceRoom , user_id: JSON.parse(localStorage.getItem('user_data') || '{}').id });
+            socket.emit('leave', { device_id: currentDeviceRoom, user_id: userId });
         }
         
         // Join new room
-        socket.emit('join', { device_id: deviceId , user_id: JSON.parse(localStorage.getItem('user_data') || '{}').id });
+        socket.emit('join', { device_id: deviceId, user_id: userId });
         currentDeviceRoom = deviceId;
-        console.log(`Joined room for device: ${deviceId}`);
+        console.log(`Joined room for device: ${deviceId}, user: ${userId}`);
     }
 }
 
@@ -1085,9 +1097,7 @@ function loadEnvironmentalDataCards() {
     }
 
     // Fetch live data from backend API
-    fetch(`/api/data?hours=1&deviceid=${currentDeviceId}`, {
-        credentials: 'same-origin'
-    })
+    apiFetch(`/api/data?hours=1&deviceid=${currentDeviceId}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -2059,9 +2069,7 @@ function fetchData(hours = 24) {
 
     const loadingIndicator = showLoading();
     
-    fetch(`/api/data?hours=${encodeURIComponent(hours)}&avg_window=${encodeURIComponent(currentAvgWindow)}&deviceid=${encodeURIComponent(currentDeviceId)}`, {
-        credentials: 'same-origin'
-    })
+    apiFetch(`/api/data?hours=${encodeURIComponent(hours)}&avg_window=${encodeURIComponent(currentAvgWindow)}&deviceid=${encodeURIComponent(currentDeviceId)}`)
         .then(response => {
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -2405,7 +2413,7 @@ function updateParameterTrendChart(parameter) {
     if (!currentDeviceId) return;
     
     // Fetch current data and update chart
-    fetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             if (charts.paramTrendChart && data.history) {
@@ -2429,7 +2437,7 @@ function updateCorrelationChart() {
     
     if (!paramX || !paramY || !currentDeviceId) return;
     
-    fetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             if (charts.correlationScatter && data.history) {
@@ -2460,7 +2468,7 @@ function updateCorrelationChart() {
 function updateHistogramChart(parameter) {
     if (!currentDeviceId) return;
     
-    fetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=24&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             if (charts.histogramChart && data.history) {
@@ -4126,7 +4134,7 @@ function updateThresholds() {
         tsp: parseFloat(document.getElementById('threshold_tsp').value)
     };
     
-    fetch(`/api/update_thresholds?deviceid=${encodeURIComponent(currentDeviceId)}`, {
+    apiFetch(`/api/update_thresholds?deviceid=${encodeURIComponent(currentDeviceId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(thresholds)
@@ -4534,7 +4542,7 @@ window.testAPIData = function() {
     }
 
     console.log('📡 Fetching data from API...');
-    fetch(`/api/data?hours=1&deviceid=${currentDeviceId}`)
+    apiFetch(`/api/data?hours=1&deviceid=${currentDeviceId}`)
         .then(response => response.json())
         .then(data => {
             console.log('📊 API Response:', data);
