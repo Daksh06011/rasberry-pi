@@ -197,6 +197,35 @@ if USE_SQLITE:
             tsp REAL
         )''')
         
+        # Seed default admin user if it does not exist
+        cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
+        if not cur.fetchone():
+            from werkzeug.security import generate_password_hash
+            admin_hash = generate_password_hash('admin123')
+            cur.execute(
+                "INSERT INTO dust_users (username, email, password_hash, is_admin) VALUES ('admin', 'admin@example.com', ?, 1)",
+                (admin_hash,)
+            )
+            logging.info("Seeded default admin user into SQLite database")
+
+        # Seed default data source if it does not exist
+        cur.execute("SELECT id FROM dust_data_sources WHERE id = 1")
+        if not cur.fetchone():
+            cur.execute("""
+                INSERT INTO dust_data_sources (id, description, source_type, broker_url, username, password)
+                VALUES (1, 'HiveMQ Public Broker', 'mqtt', 'broker.hivemq.com', 'Daksh', 'Sgn@1234')
+            """)
+            logging.info("Seeded default data source into SQLite database")
+
+        # Seed default device if it does not exist
+        cur.execute("SELECT id FROM dust_devices WHERE deviceid = 'xiao-cam-01'")
+        if not cur.fetchone():
+            cur.execute("""
+                INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
+                VALUES (5, 'xiao-cam-01', 'Xiao Cam', 1, 1, 0)
+            """)
+            logging.info("Seeded default device into SQLite database")
+            
         conn.commit()
         return conn
     
