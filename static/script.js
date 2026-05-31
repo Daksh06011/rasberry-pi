@@ -427,8 +427,8 @@ function initializeWebSocket() {
         socket.on('new_data', function(data) {
             if (String(data.device_id) === String(currentDeviceId)) {
                 console.log('📡 Received WebSocket sensor data');
-                // WebSocket data is for real-time updates only - don't replace charts
                 processWebSocketData(data);
+                fetchData(24, false); // Trigger silent chart update with new real-time point
             }
         });
 
@@ -439,6 +439,7 @@ function initializeWebSocket() {
                 const normalized = normalizeIncomingData({ extended: data });
                 if (normalized && normalized.extended) {
                     updateExtendedData(normalized.extended);
+                    fetchData(24, false); // Trigger silent chart update with new real-time point
                 } else {
                     console.warn('❌ Failed to normalize WebSocket extended data');
                 }
@@ -2093,13 +2094,13 @@ function safeChartUpdate(chart, key = 'chart') {
 // DATA FETCHING (Enhanced from your existing)
 // ========================
 
-function fetchData(hours = 24) {
+function fetchData(hours = 24, showSpinner = true) {
     if (!currentDeviceId) {
         createAlert('Please select a device first', 'warning');
         return;
     }
 
-    const loadingIndicator = showLoading();
+    const loadingIndicator = showSpinner ? showLoading() : null;
     
     apiFetch(`/api/data?hours=${encodeURIComponent(hours)}&avg_window=${encodeURIComponent(currentAvgWindow)}&deviceid=${encodeURIComponent(currentDeviceId)}`)
         .then(response => {
@@ -2113,7 +2114,9 @@ function fetchData(hours = 24) {
         })
         .catch(error => {
             console.error('Error fetching data:', error);
-            createAlert('Failed to fetch data. Please try again.', 'danger');
+            if (showSpinner) {
+                createAlert('Failed to fetch data. Please try again.', 'danger');
+            }
         })
         .finally(() => {
             if (loadingIndicator && loadingIndicator.parentNode === document.body) {
