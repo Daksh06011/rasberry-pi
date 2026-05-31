@@ -2428,38 +2428,6 @@ function updateCharts(data) {
     }
 }
 
-// Fixed Extended Charts Update Function
-function updateExtendedCharts(data) {
-    if (!data) return;
-
-    if (!charts.environmentalCombinedChart) return;
-
-    const history = data.history || {};
-    const extendedHistory = history.extended || {};
-    const timestampSource = history.timestamps || extendedHistory.timestamps || [];
-    if (!timestampSource.length) return;
-
-    const timestamps = timestampSource.map(t => new Date(t));
-    const seriesFrom = (primary, fallback, singleValue) => {
-        if (Array.isArray(primary) && primary.length) return primary;
-        if (Array.isArray(fallback) && fallback.length) return fallback;
-        if (singleValue !== undefined && singleValue !== null && singleValue !== '') {
-            return Array(timestamps.length).fill(Number(singleValue));
-        }
-        return [];
-    };
-
-    charts.environmentalCombinedChart.data.labels = timestamps;
-    charts.environmentalCombinedChart.data.datasets[0].data = seriesFrom(history.temperature, extendedHistory.temperature_c, data.extended?.temperature_c);
-    charts.environmentalCombinedChart.data.datasets[1].data = seriesFrom(history.humidity, extendedHistory.humidity_percent, data.extended?.humidity_percent);
-    charts.environmentalCombinedChart.data.datasets[2].data = seriesFrom(history.pressure, extendedHistory.pressure_hpa, data.extended?.pressure_hpa);
-    charts.environmentalCombinedChart.data.datasets[3].data = seriesFrom(history.voc, extendedHistory.voc_ppb, data.extended?.voc_ppb);
-    charts.environmentalCombinedChart.data.datasets[4].data = seriesFrom(history.no2, extendedHistory.no2_ppb, data.extended?.no2_ppb);
-    charts.environmentalCombinedChart.data.datasets[5].data = seriesFrom(history.noise, extendedHistory.noise_db, data.extended?.noise_db);
-
-    safeChartUpdate(charts.environmentalCombinedChart, 'environmentalCombinedChart');
-}
-
 function debugDataFlow(data, stage) {
     console.group(`Data Flow: ${stage}`);
     console.log('Raw data structure:', data);
