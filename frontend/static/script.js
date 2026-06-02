@@ -2376,25 +2376,37 @@ function updateCharts(data) {
         charts.timeChart.data.datasets[3].data = data.history.pm10 || [];
         charts.timeChart.data.datasets[4].data = data.history.tsp || [];
 
-        // Compute suggested max for y-axis to keep chart scaled to data
+        // Handle suggestedMax and rigid axes logic safely
         try {
             const allVals = [].concat(
-                charts.timeChart.data.datasets[0].data || [],
-                charts.timeChart.data.datasets[1].data || [],
-                charts.timeChart.data.datasets[2].data || [],
-                charts.timeChart.data.datasets[3].data || [],
-                charts.timeChart.data.datasets[4].data || []
-            ).map(Number).filter(v => !isNaN(v));
+                data.history.pm1 || [],
+                data.history.pm2_5 || [],
+                data.history.pm4 || [],
+                data.history.pm10 || [],
+                data.history.tsp || []
+            ).map(Number).filter(v => !isNaN(v) && v != null);
 
             const maxVal = allVals.length ? Math.max(...allVals) : 50;
-            // Add buffer and round up to sensible tick (10/50/100)
-            const buffer = Math.max(10, Math.round(maxVal * 0.25));
-            const suggestedMax = Math.ceil((maxVal + buffer) / 10) * 10;
-            if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
-            if (!charts.timeChart.options.scales.y) charts.timeChart.options.scales.y = {};
-            charts.timeChart.options.scales.y.suggestedMax = suggestedMax;
+
+            if (rigidAxesEnabled) {
+                // Ensure rigidMax is at least 50 to prevent zero-scale rendering bugs
+                const rigidMax = Math.max(50, Math.ceil(maxVal * 1.1 / 50) * 50);
+                rigidMaxByChart['timeChart'] = rigidMax;
+                if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
+                if (!charts.timeChart.options.scales.y) charts.timeChart.options.scales.y = {};
+                charts.timeChart.options.scales.y.max = rigidMax;
+            } else {
+                // Add buffer and round up to sensible tick (10/50/100)
+                const buffer = Math.max(10, Math.round(maxVal * 0.25));
+                const suggestedMax = Math.max(50, Math.ceil((maxVal + buffer) / 10) * 10);
+                if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
+                if (!charts.timeChart.options.scales.y) charts.timeChart.options.scales.y = {};
+                charts.timeChart.options.scales.y.suggestedMax = suggestedMax;
+                // Remove absolute max to let Chart.js scale it dynamically
+                delete charts.timeChart.options.scales.y.max;
+            }
         } catch (e) {
-            console.warn('Failed to compute suggestedMax for chart:', e);
+            console.warn('Failed to compute suggestedMax/rigidMax for chart:', e);
         }
 
         // Compute a simple moving average for PM2.5 to aid readability
@@ -2408,7 +2420,6 @@ function updateCharts(data) {
                 const slice = pm.slice(start, i + 1).filter(v => !isNaN(v));
                 if (slice.length) ma[i] = slice.reduce((a, b) => a + b, 0) / slice.length;
             }
-            // Place MA into dataset index 5 (we created it during init)
             if (charts.timeChart.data.datasets[5]) charts.timeChart.data.datasets[5].data = ma;
         } catch (e) {
             console.warn('Failed to compute moving average:', e);
@@ -2421,7 +2432,6 @@ function updateCharts(data) {
     if (charts.unifiedChart && data.history.timestamps) {
         const timestamps = data.history.timestamps.map(t => new Date(t));
         
-        // Get environmental data if available
         const tempData = data.extended?.temperature_c ? 
             Array(timestamps.length).fill(data.extended.temperature_c) : 
             (data.history.temperature || []);
@@ -2430,19 +2440,39 @@ function updateCharts(data) {
             (data.history.humidity || []);
 
         charts.unifiedChart.data.labels = timestamps;
-        // PM datasets (0-4)
         charts.unifiedChart.data.datasets[0].data = data.history.pm1 || [];
         charts.unifiedChart.data.datasets[1].data = data.history.pm2_5 || [];
         charts.unifiedChart.data.datasets[2].data = data.history.pm4 || [];
         charts.unifiedChart.data.datasets[3].data = data.history.pm10 || [];
-        // Temperature and Humidity datasets (5-6)
         charts.unifiedChart.data.datasets[4].data = tempData;
         charts.unifiedChart.data.datasets[5].data = humidityData;
 
         safeChartUpdate(charts.unifiedChart, 'unifiedChart');
-        
-        // Update unified chart statistics
         updateUnifiedChartStatistics(data);
+    }
+
+    // Update threshold comparison chart
+    if (charts.thresholdChart && data.sensor) {
+        const currentValues = [
+            data.sensor.pm1 || 0,
+            data.sensor.pm2_5 || 0,
+            data.sensor.pm4 || 0,
+            data.sensor.pm10 || 0,
+            data.sensor.tsp || 0
+        ];
+        
+        const thresholdValues = data.status && data.status.thresholds ? [
+            data.status.thresholds.pm1 || 50,
+            data.status.thresholds['pm2.5'] || 75,
+            data.status.thresholds.pm4 || 100,
+            data.status.thresholds.pm10 || 150,
+            data.status.thresholds.tsp || 200
+        ] : [50, 75, 100, 150, 200];
+        
+        charts.thresholdChart.data.datasets[0].data = currentValues;
+        charts.thresholdChart.data.datasets[1].data = thresholdValues;
+        
+        safeChartUpdate(charts.thresholdChart, 'thresholdChart');
     }
 }
 
@@ -3444,68 +3474,7 @@ function getParameterLabel(param) {
     return labels[param] || param.toUpperCase();
 }
 
-// ======================== 
-// CHART UPDATE FUNCTIONS (Fixed)
-// ========================
-function updateCharts(data) {
-    if (!data.history) return;
-    
-    // Update PM Time Chart
-    if (charts.timeChart && data.history.timestamps) {
-        const timestamps = data.history.timestamps.map(t => new Date(t));
-        
-        charts.timeChart.data.labels = timestamps;
-        charts.timeChart.data.datasets[0].data = data.history.pm1 || [];
-        charts.timeChart.data.datasets[1].data = data.history.pm2_5 || [];
-        charts.timeChart.data.datasets[2].data = data.history.pm4 || [];
-        charts.timeChart.data.datasets[3].data = data.history.pm10 || [];
-        charts.timeChart.data.datasets[4].data = data.history.tsp || [];
-        
-        // Handle rigid axes if enabled
-        if (rigidAxesEnabled && data.history.pm1 && data.history.pm1.length > 0) {
-            const allValues = [
-                ...data.history.pm1,
-                ...data.history.pm2_5,
-                ...data.history.pm4,
-                ...data.history.pm10,
-                ...data.history.tsp
-            ].filter(v => v != null && !isNaN(v));
-            
-            if (allValues.length > 0) {
-                const maxVal = Math.max(...allValues);
-                const rigidMax = Math.ceil(maxVal * 1.1 / 50) * 50;
-                rigidMaxByChart['timeChart'] = rigidMax;
-                charts.timeChart.options.scales.y.max = rigidMax;
-            }
-        }
-        
-        safeChartUpdate(charts.timeChart, 'timeChart');
-    }
-    
-    // Update threshold comparison chart
-    if (charts.thresholdChart && data.sensor) {
-        const currentValues = [
-            data.sensor.pm1 || 0,
-            data.sensor.pm2_5 || 0,
-            data.sensor.pm4 || 0,
-            data.sensor.pm10 || 0,
-            data.sensor.tsp || 0
-        ];
-        
-        const thresholdValues = data.status && data.status.thresholds ? [
-            data.status.thresholds.pm1 || 50,
-            data.status.thresholds['pm2.5'] || 75,
-            data.status.thresholds.pm4 || 100,
-            data.status.thresholds.pm10 || 150,
-            data.status.thresholds.tsp || 200
-        ] : [50, 75, 100, 150, 200];
-        
-        charts.thresholdChart.data.datasets[0].data = currentValues;
-        charts.thresholdChart.data.datasets[1].data = thresholdValues;
-        
-        safeChartUpdate(charts.thresholdChart, 'thresholdChart');
-    }
-}
+// Shadowed updateCharts function removed and consolidated to avoid clashing declarations
 
 function calculateAQI(pm25) {
     if (pm25 === null || pm25 === undefined || pm25 === '') return null;
