@@ -218,13 +218,21 @@ if USE_SQLITE:
             logging.info("Seeded default data source into SQLite database")
 
         # Seed default device if it does not exist
-        cur.execute("SELECT id FROM dust_devices WHERE deviceid = 'xiao-cam-01'")
+        cur.execute("SELECT id FROM dust_devices WHERE deviceid = 'xiao-cam-01' OR deviceid = 'SGN-V3-12'")
         if not cur.fetchone():
             cur.execute("""
                 INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
-                VALUES (5, 'xiao-cam-01', 'SGN', 1, 1, 0)
+                VALUES (5, 'SGN-V3-12', 'SGN-V3-12', 1, 1, 0)
             """)
-            logging.info("Seeded default device into SQLite database")
+            logging.info("Seeded default device SGN-V3-12 into SQLite database")
+        else:
+            # Migrate existing xiao-cam-01 to SGN-V3-12 to preserve all historical data under the new name
+            cur.execute("""
+                UPDATE dust_devices 
+                SET deviceid = 'SGN-V3-12', name = 'SGN-V3-12' 
+                WHERE deviceid = 'xiao-cam-01'
+            """)
+            logging.info("Migrated existing default device from xiao-cam-01 to SGN-V3-12")
             
         conn.commit()
         return conn
