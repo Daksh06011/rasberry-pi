@@ -233,6 +233,82 @@ if USE_SQLITE:
                 WHERE deviceid = 'xiao-cam-01'
             """)
             logging.info("Migrated existing default device from xiao-cam-01 to SGN-V3-12")
+        # Ensure historical telemetry data is seeded if empty in SQLite
+        try:
+            cur.execute("SELECT COUNT(id) FROM dust_sensor_data WHERE device_id = 5")
+            count = cur.fetchone()[0]
+            if count == 0:
+                logging.info("SQLite sensor data is empty. Seeding historical telemetry for SGN-V3-12...")
+                from datetime import datetime, timedelta, timezone
+                import random
+                import json
+                
+                now = datetime.now(timezone.utc)
+                for i in range(15):
+                    timestamp = now - timedelta(minutes=(14 - i))
+                    timestamp_str = timestamp.isoformat().replace('+00:00', 'Z')
+                    
+                    pm1 = round(random.uniform(5.0, 12.0), 1)
+                    pm2_5 = round(random.uniform(10.0, 24.0), 1)
+                    pm4 = round(random.uniform(12.0, 28.0), 1)
+                    pm10 = round(random.uniform(15.0, 42.0), 1)
+                    tsp = round(random.uniform(18.0, 48.0), 1)
+                    
+                    temperature = round(random.uniform(22.0, 24.8), 1)
+                    humidity = round(random.uniform(45.0, 58.0), 1)
+                    pressure = round(random.uniform(1011.5, 1013.2), 1)
+                    voc = round(random.uniform(90.0, 130.0), 1)
+                    no2 = round(random.uniform(25.0, 38.0), 1)
+                    noise = round(random.uniform(46.0, 54.0), 1)
+                    lux = round(random.uniform(100.0, 300.0), 1)
+                    uv = round(random.uniform(0.1, 1.2), 1)
+                    battery = round(random.uniform(75.0, 95.0), 1)
+                    
+                    raw_payload = {
+                        "site": "SGN-V3-12",
+                        "mac": "94:A9:90:04:6A:70",
+                        "ts": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                        "ip": "192.168.31.92",
+                        "rssi": -58,
+                        "lat": 51.5074,
+                        "lon": -0.1278,
+                        "sound": noise,
+                        "no2": no2,
+                        "voc": voc,
+                        "tsi": "token_http",
+                        "tsi_serial": "81432008054",
+                        "tsi_pm1": pm1,
+                        "tsi_pm25": pm2_5,
+                        "tsi_pm4": pm4,
+                        "tsi_pm10": pm10,
+                        "tsi_temp": temperature,
+                        "tsi_rh": humidity
+                    }
+                    
+                    cur.execute("""
+                        INSERT INTO dust_sensor_data (timestamp, device_id, data_source_id, pm1, pm2_5, pm4, pm10, tsp)
+                        VALUES (?, 5, 1, ?, ?, ?, ?, ?)
+                    """, (timestamp_str, pm1, pm2_5, pm4, pm10, tsp))
+                    
+                    cur.execute("""
+                        INSERT INTO dust_extended_data (
+                            device_id, timestamp, temperature_c, humidity_percent, pressure_hpa,
+                            voc_ppb, no2_ppb, pm1, pm2_5, pm4, pm10, tsp_um,
+                            gps_lat, gps_lon, gps_alt_m, gps_speed_kmh, cloud_cover_percent,
+                            noise_db, lux, uv_index, battery_percent, raw_payload
+                        ) VALUES (
+                            5, ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?, ?,
+                            51.5074, -0.1278, 0, 0, 0,
+                            ?, ?, ?, ?, ?
+                        )
+                    """, (timestamp_str, temperature, humidity, pressure,
+                          voc, no2, pm1, pm2_5, pm4, pm10, tsp,
+                          noise, lux, uv, battery, json.dumps(raw_payload)))
+                
+                logging.info("Successfully seeded 15 SQLite historical telemetry points")
+        except Exception as e:
+            logging.error(f"Failed to seed SQLite historical telemetry: {e}")
             
         conn.commit()
         return conn
@@ -488,6 +564,84 @@ def initialize_database():
                 conn.commit()
             except Exception as e:
                 logging.error(f"Failed to seed/migrate device: {e}")
+
+            # Ensure historical telemetry data is seeded if empty in PostgreSQL
+            try:
+                cur.execute("SELECT COUNT(id) FROM dust_sensor_data WHERE device_id = 5")
+                count = cur.fetchone()[0]
+                if count == 0:
+                    logging.info("PostgreSQL sensor data is empty. Seeding historical telemetry for SGN-V3-12...")
+                    from datetime import datetime, timedelta, timezone
+                    import random
+                    import json
+                    
+                    now = datetime.now(timezone.utc)
+                    for i in range(15):
+                        timestamp = now - timedelta(minutes=(14 - i))
+                        timestamp_str = timestamp.isoformat().replace('+00:00', 'Z')
+                        
+                        pm1 = round(random.uniform(5.0, 12.0), 1)
+                        pm2_5 = round(random.uniform(10.0, 24.0), 1)
+                        pm4 = round(random.uniform(12.0, 28.0), 1)
+                        pm10 = round(random.uniform(15.0, 42.0), 1)
+                        tsp = round(random.uniform(18.0, 48.0), 1)
+                        
+                        temperature = round(random.uniform(22.0, 24.8), 1)
+                        humidity = round(random.uniform(45.0, 58.0), 1)
+                        pressure = round(random.uniform(1011.5, 1013.2), 1)
+                        voc = round(random.uniform(90.0, 130.0), 1)
+                        no2 = round(random.uniform(25.0, 38.0), 1)
+                        noise = round(random.uniform(46.0, 54.0), 1)
+                        lux = round(random.uniform(100.0, 300.0), 1)
+                        uv = round(random.uniform(0.1, 1.2), 1)
+                        battery = round(random.uniform(75.0, 95.0), 1)
+                        
+                        raw_payload = {
+                            "site": "SGN-V3-12",
+                            "mac": "94:A9:90:04:6A:70",
+                            "ts": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                            "ip": "192.168.31.92",
+                            "rssi": -58,
+                            "lat": 51.5074,
+                            "lon": -0.1278,
+                            "sound": noise,
+                            "no2": no2,
+                            "voc": voc,
+                            "tsi": "token_http",
+                            "tsi_serial": "81432008054",
+                            "tsi_pm1": pm1,
+                            "tsi_pm25": pm2_5,
+                            "tsi_pm4": pm4,
+                            "tsi_pm10": pm10,
+                            "tsi_temp": temperature,
+                            "tsi_rh": humidity
+                        }
+                        
+                        cur.execute("""
+                            INSERT INTO dust_sensor_data (timestamp, device_id, data_source_id, pm1, pm2_5, pm4, pm10, tsp)
+                            VALUES (%s, 5, 1, %s, %s, %s, %s, %s)
+                        """, (timestamp_str, pm1, pm2_5, pm4, pm10, tsp))
+                        
+                        cur.execute("""
+                            INSERT INTO dust_extended_data (
+                                device_id, timestamp, temperature_c, humidity_percent, pressure_hpa,
+                                voc_ppb, no2_ppb, pm1, pm2_5, pm4, pm10, tsp_um,
+                                gps_lat, gps_lon, gps_alt_m, gps_speed_kmh, cloud_cover_percent,
+                                noise_db, lux, uv_index, battery_percent, raw_payload
+                            ) VALUES (
+                                5, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s,
+                                51.5074, -0.1278, 0, 0, 0,
+                                %s, %s, %s, %s, %s
+                            )
+                        """, (timestamp_str, temperature, humidity, pressure,
+                              voc, no2, pm1, pm2_5, pm4, pm10, tsp,
+                              noise, lux, uv, battery, json.dumps(raw_payload)))
+                    
+                    conn.commit()
+                    logging.info("Successfully seeded 15 PostgreSQL historical telemetry points")
+            except Exception as e:
+                logging.error(f"Failed to seed PostgreSQL historical telemetry: {e}")
 
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
