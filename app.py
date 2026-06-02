@@ -1458,6 +1458,7 @@ def emit_websocket_update(device_id):
             else:
                 logging.info(f"No extended data found for device {device_id}")
 
+            socketio.emit('new_data', websocket_data, room=f"device_{device_id}")
             socketio.emit('new_data', websocket_data, room=f"user_{user_id}_device_{device_id}")
 
     except Exception as e:
@@ -1502,6 +1503,7 @@ def emit_extended_websocket_update(device_id):
             return data
 
         serialized_data = serialize_extended_row(latest_ext)
+        socketio.emit('new_extended_data', serialized_data, room=f"device_{device_id}")
         socketio.emit('new_extended_data', serialized_data, room=f"user_{user_id}_device_{device_id}")
 
     except Exception as e:
@@ -3510,22 +3512,28 @@ def handle_join(data):
     device_id = data.get('device_id')
     user_id = data.get('user_id')
 
-    if device_id and user_id:
-        room_name = f"user_{user_id}_device_{device_id}"
-        join_room(room_name)
-        logging.info(f'Joined room: {room_name}')
-        emit('message', {'status': f'Joined {room_name}'})
+    if device_id:
+        join_room(f"device_{device_id}")
+        logging.info(f"Joined room: device_{device_id}")
+        if user_id:
+            room_name = f"user_{user_id}_device_{device_id}"
+            join_room(room_name)
+            logging.info(f"Joined room: {room_name}")
+            emit('message', {'status': f'Joined {room_name}'})
 
 @socketio.on('leave')
 def handle_leave(data):
     device_id = data.get('device_id')
     user_id = data.get('user_id')
 
-    if device_id and user_id:
-        room_name = f"user_{user_id}_device_{device_id}"  # Match join format
-        leave_room(room_name)
-        logging.info(f'Left room: {room_name}')
-        emit('message', {'status': f'Left {room_name}'})
+    if device_id:
+        leave_room(f"device_{device_id}")
+        logging.info(f"Left room: device_{device_id}")
+        if user_id:
+            room_name = f"user_{user_id}_device_{device_id}"
+            leave_room(room_name)
+            logging.info(f"Left room: {room_name}")
+            emit('message', {'status': f'Left {room_name}'})
 
 def emit_device_update(device_id, data):
     socketio.emit('new_data', data, room=f'device_{device_id}')
