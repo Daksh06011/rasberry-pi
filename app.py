@@ -1008,12 +1008,24 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                     client.username_pw_set(username, password)
                     logging.info(f"[MQTT-{data_source_id}] Auth configured for user: {username}")
 
-                # Configure TLS for Railway compatibility
-                import ssl
-                context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                client.tls_set_context(context)
+                # Parse host and port dynamically from broker_url
+                port = 8883
+                host = broker_url
+                if ":" in broker_url:
+                    parts = broker_url.split(":")
+                    host = parts[0]
+                    port = int(parts[1])
+                elif "broker.hivemq.com" in broker_url:
+                    port = 1883
+
+                # Configure TLS only for secure port 8883
+                if port == 8883:
+                    import ssl
+                    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                    client.tls_set_context(context)
+                    logging.info(f"[MQTT-{data_source_id}] TLS configured for secure connection")
 
                 # Set callbacks
                 client.on_connect = on_connect
@@ -1024,8 +1036,8 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                 client.max_inflight_messages_set(10)
                 client.max_queued_messages_set(100)
 
-                logging.info(f"[MQTT-{data_source_id}] Connecting to {broker_url}:8883...")
-                client.connect(broker_url, 8883, 60)
+                logging.info(f"[MQTT-{data_source_id}] Connecting to {host}:{port}...")
+                client.connect(host, port, 60)
 
                 # Store client reference
                 mqtt_clients[data_source_id] = client
@@ -1075,7 +1087,7 @@ def initialize_mqtt_clients():
                 # Use standard threading instead of eventlet for Railway compatibility
                 thread = threading.Thread(
                     target=start_mqtt_client,
-                    args=(data_source_id, broker_url, ['sensor/data', 'dustrak/status', 'xiao/dashboard'], username, password),
+                    args=(data_source_id, broker_url, ['sensor/data', 'dustrak/status', 'xiao/dashboard', 'SGNCONTROLS/dashboard'], username, password),
                     daemon=True,
                     name=f"MQTT-{data_source_id}"
                 )
