@@ -441,13 +441,53 @@ def initialize_database():
             """)
             conn.commit()
 
-            # Ensure admin password is valid
+            # Ensure admin user is seeded and password is valid
             try:
                 admin_hash = generate_password_hash('admin123')
-                cur.execute("UPDATE dust_users SET password_hash = %s WHERE username = 'admin'", (admin_hash,))
+                cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
+                if not cur.fetchone():
+                    cur.execute(
+                        "INSERT INTO dust_users (username, email, password_hash, is_admin) VALUES ('admin', 'admin@example.com', %s, TRUE)",
+                        (admin_hash,)
+                    )
+                    logging.info("Seeded default admin user into PostgreSQL")
+                else:
+                    cur.execute("UPDATE dust_users SET password_hash = %s WHERE username = 'admin'", (admin_hash,))
                 conn.commit()
             except Exception as e:
-                logging.error(f"Failed to reset admin password: {e}")
+                logging.error(f"Failed to seed/reset admin user: {e}")
+
+            # Ensure default data source is seeded
+            try:
+                cur.execute("SELECT id FROM dust_data_sources WHERE id = 1")
+                if not cur.fetchone():
+                    cur.execute("""
+                        INSERT INTO dust_data_sources (id, description, source_type, broker_url, username, password)
+                        VALUES (1, 'HiveMQ Public Broker', 'mqtt', 'broker.hivemq.com', 'Daksh', 'Sgn@1234')
+                    """)
+                    logging.info("Seeded default data source into PostgreSQL")
+                conn.commit()
+            except Exception as e:
+                logging.error(f"Failed to seed data source: {e}")
+
+            # Ensure default device is seeded
+            try:
+                cur.execute("SELECT id FROM dust_devices WHERE deviceid = 'xiao-cam-01' OR deviceid = 'SGN-V3-12'")
+                if not cur.fetchone():
+                    cur.execute("""
+                        INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
+                        VALUES (5, 'SGN-V3-12', 'SGN-V3-12', 1, 1, FALSE)
+                    """)
+                    logging.info("Seeded default device SGN-V3-12 into PostgreSQL")
+                else:
+                    cur.execute("""
+                        UPDATE dust_devices 
+                        SET deviceid = 'SGN-V3-12', name = 'SGN-V3-12' 
+                        WHERE deviceid = 'xiao-cam-01'
+                    """)
+                conn.commit()
+            except Exception as e:
+                logging.error(f"Failed to seed/migrate device: {e}")
 
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
