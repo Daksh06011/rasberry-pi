@@ -468,6 +468,23 @@ function initializeWebSocket() {
                 console.log('📡 Received WebSocket sensor data');
                 processWebSocketData(data);
                 fetchData(24, false); // Trigger silent chart update with new real-time point
+                
+                // Real-time display name update from HiveMQ message!
+                if (data.device_name) {
+                    const deviceSelect = document.getElementById('deviceSelect');
+                    if (deviceSelect) {
+                        const option = Array.from(deviceSelect.options).find(o => String(o.value) === String(data.device_id));
+                        if (option && option.textContent !== data.device_name) {
+                            console.log(`🔄 Dynamically renaming dropdown option from ${option.textContent} to ${data.device_name}`);
+                            option.textContent = data.device_name;
+                            option.setAttribute('data-name', data.device_name);
+                            // Also update header/panel if this is the active device
+                            if (String(deviceSelect.value) === String(data.device_id)) {
+                                updateDeviceInfoPanel(data.device_name, data.device_identifier || option.getAttribute('data-deviceid') || '', currentDeviceType, option.getAttribute('data-relay') === 'True');
+                            }
+                        }
+                    }
+                }
             }
         });
 

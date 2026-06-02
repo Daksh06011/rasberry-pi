@@ -453,6 +453,70 @@ def initialize_database():
 # MQTT Client Management
 mqtt_clients = {}
 
+def resolve_or_create_device(payload, data_source_id, cur):
+    """Find a device using any identifier in the payload, or create it if not found."""
+    deviceid = payload.get("deviceid")
+    i = payload.get("i")
+    mac = payload.get("mac")
+    tsi_serial = payload.get("tsi_serial")
+    site = payload.get("site")
+    name = payload.get("name")
+    
+    # 1. Look up existing device by any matching identifier
+    identifiers = [deviceid, i, mac, tsi_serial, site]
+    identifiers = [x for x in identifiers if x]  # Remove None or empty values
+    
+    row = None
+    if identifiers:
+        # Search database for any device whose deviceid matches any of payload identifiers
+        placeholders = ', '.join(['%s'] * len(identifiers)) if not USE_SQLITE else ', '.join(['?'] * len(identifiers))
+        query = f"""
+            SELECT id, deviceid, name FROM dust_devices 
+            WHERE deviceid IN ({placeholders}) AND data_source_id = %s
+        """
+        if USE_SQLITE:
+            query = query.replace('%s', '?')
+        cur.execute(query, tuple(identifiers) + (data_source_id,))
+        row = cur.fetchone()
+        
+    # 2. Determine unique device ID and display name
+    unique_id = mac or tsi_serial or deviceid or i or site or "unknown"
+    display_name = site or name or unique_id
+    
+    if row:
+        device_id_db = row[0]
+        # Dynamically update the device name to whatever is received
+        if display_name and row[2] != display_name:
+            try:
+                cur.execute("""
+                    UPDATE dust_devices
+                    SET name = %s
+                    WHERE id = %s
+                """, (display_name, device_id_db))
+                logging.info(f"[DEVICE-RESOLVE] Dynamically updated device {device_id_db} name to: {display_name}")
+            except Exception as ne:
+                logging.warning(f"[DEVICE-RESOLVE] Failed to dynamically update device name: {ne}")
+    else:
+        # Auto-create device
+        logging.warning(f"[DEVICE-RESOLVE] Device not found for identifiers {identifiers}. Auto-creating...")
+        if USE_SQLITE:
+            cur.execute("""
+                INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
+                VALUES (?, ?, 1, 0, ?)
+            """, (unique_id, display_name, data_source_id))
+            cur.execute("SELECT id FROM dust_devices WHERE deviceid = ? AND data_source_id = ?", (unique_id, data_source_id))
+            row = cur.fetchone()
+        else:
+            cur.execute("""
+                INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
+                VALUES (%s, %s, 1, FALSE, %s) RETURNING id
+            """, (unique_id, display_name, data_source_id))
+            row = cur.fetchone()
+        device_id_db = row[0]
+        logging.info(f"[DEVICE-RESOLVE] Created new device {display_name} with unique key {unique_id}")
+        
+    return device_id_db, unique_id
+
 def process_extended_device_data(payload, device_id, timestamp, data_source_id):
     """Process and store extended telemetry data for new device type"""
     logging.info(f"[EXTENDED] Processing data for device: {device_id}")
@@ -464,47 +528,9 @@ def process_extended_device_data(payload, device_id, timestamp, data_source_id):
         conn = get_db_connection()
         cur = get_db_cursor(conn)
 
-        # Get or validate device
-        cur.execute("""
-            SELECT id FROM dust_devices
-            WHERE deviceid = %s AND data_source_id = %s
-        """, (device_id, data_source_id))
-        row = cur.fetchone()
-        
-        if not row:
-            logging.warning(f"[EXTENDED] Unauthorized device: {device_id} for source: {data_source_id}. Auto-creating...")
-            if USE_SQLITE:
-                cur.execute("""
-                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
-                    VALUES (%s, %s, 1, 0, %s)
-                """, (device_id, device_id, data_source_id))
-                conn.commit()
-                cur.execute("SELECT id FROM dust_devices WHERE deviceid = %s AND data_source_id = %s", (device_id, data_source_id))
-                row = cur.fetchone()
-            else:
-                cur.execute("""
-                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
-                    VALUES (%s, %s, 1, FALSE, %s) RETURNING id
-                """, (device_id, device_id, data_source_id))
-                row = cur.fetchone()
-                conn.commit()
-
-
-        device_id_db = row[0]
-        logging.info(f"[EXTENDED] Found device in DB with ID: {device_id_db}")
-
-        # Dynamically update device name to whatever is received in the payload's "site" or "name" field
-        received_name = payload.get("site") or payload.get("name")
-        if received_name:
-            try:
-                cur.execute("""
-                    UPDATE dust_devices
-                    SET name = %s
-                    WHERE id = %s
-                """, (received_name, device_id_db))
-                logging.info(f"[EXTENDED] Dynamically updated device {device_id_db} name to: {received_name}")
-            except Exception as ne:
-                logging.warning(f"[EXTENDED] Failed to dynamically update device name: {ne}")
+        # Get or validate/create device dynamically
+        device_id_db, device_id = resolve_or_create_device(payload, data_source_id, cur)
+        logging.info(f"[EXTENDED] Resolved device ID in DB: {device_id_db}")
 
         # Check if this is the new final Waveshare format
         if "ads1115" in payload and "sky" in payload:
@@ -1168,49 +1194,14 @@ def process_sensor_data(payload, device_id, timestamp, data_source_id):
         conn = get_db_connection()
         cur = get_db_cursor(conn)
 
-        # Get or create device associated with this data source
-        cur.execute("""
-            SELECT id, user_id, has_relay 
-            FROM dust_devices 
-            WHERE deviceid = %s AND data_source_id = %s
-        """, (device_id, data_source_id))
-        device = cur.fetchone()
-
-        if not device:
-            # Create device with admin user as owner
-            logging.warning(f"Unauthorized device creation attempted: {device_id}. Auto-creating...")
-            if USE_SQLITE:
-                cur.execute("""
-                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
-                    VALUES (%s, %s, 1, 0, %s)
-                """, (device_id, device_id, data_source_id))
-                conn.commit()
-                cur.execute("SELECT id, user_id, has_relay FROM dust_devices WHERE deviceid = %s AND data_source_id = %s", (device_id, data_source_id))
-                device = cur.fetchone()
-            else:
-                cur.execute("""
-                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
-                    VALUES (%s, %s, 1, FALSE, %s) RETURNING id, user_id, has_relay
-                """, (device_id, device_id, data_source_id))
-                device = cur.fetchone()
-                conn.commit()
-
-        device_id_db = device[0]
-        user_id = device[1]
-        has_relay = device[2]
-
-        # Dynamically update device name to whatever is received in the payload's "site" or "name" field
-        received_name = payload.get("site") or payload.get("name")
-        if received_name:
-            try:
-                cur.execute("""
-                    UPDATE dust_devices
-                    SET name = %s
-                    WHERE id = %s
-                """, (received_name, device_id_db))
-                logging.info(f"Dynamically updated device {device_id_db} name to: {received_name}")
-            except Exception as ne:
-                logging.warning(f"Failed to dynamically update device name: {ne}")
+        # Get or validate/create device dynamically
+        device_id_db, device_id = resolve_or_create_device(payload, data_source_id, cur)
+        
+        # Get user_id and has_relay for downstream processing
+        cur.execute("SELECT user_id, has_relay FROM dust_devices WHERE id = %s" if not USE_SQLITE else "SELECT user_id, has_relay FROM dust_devices WHERE id = ?", (device_id_db,))
+        row = cur.fetchone()
+        user_id = row[0] if row else 1
+        has_relay = row[1] if row else False
 
         # Insert sensor data
         pm_data = payload.get("PM_data", {})
@@ -1466,13 +1457,17 @@ def emit_websocket_update(device_id):
             logging.warning(f"Could not fetch extended data for device {device_id}: {e}")
 
         # Prepare data for WebSocket
-        cur.execute("SELECT user_id FROM dust_devices WHERE id = %s", (device_id,))
+        cur.execute("SELECT user_id, name, deviceid FROM dust_devices WHERE id = %s" if not USE_SQLITE else "SELECT user_id, name, deviceid FROM dust_devices WHERE id = ?", (device_id,))
         user_row = cur.fetchone()
         if user_row:
-            user_id = user_row['user_id']
+            user_id = user_row[0]
+            device_name = user_row[1]
+            device_identifier = user_row[2]
 
             websocket_data = {
                 'device_id': device_id,
+                'device_name': device_name,
+                'device_identifier': device_identifier,
                 'sensor': {
                     **latest_sensor,
                     'timestamp': safe_isoformat(latest_sensor['timestamp']),
