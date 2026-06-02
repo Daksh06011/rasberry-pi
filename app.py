@@ -222,7 +222,7 @@ if USE_SQLITE:
         if not cur.fetchone():
             cur.execute("""
                 INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
-                VALUES (5, 'xiao-cam-01', 'Xiao Cam', 1, 1, 0)
+                VALUES (5, 'xiao-cam-01', 'SGN', 1, 1, 0)
             """)
             logging.info("Seeded default device into SQLite database")
             
