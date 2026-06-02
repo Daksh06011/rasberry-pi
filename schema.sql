@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS dust_extended_data (
     gps_lon DOUBLE PRECISION,
     gps_alt_m DOUBLE PRECISION,
     gps_speed_kmh DOUBLE PRECISION,
-    cloud_cover_percent DOUBLE PRECISION
+    cloud_cover_percent DOUBLE PRECISION,
+    raw_payload TEXT
 );
 
 -- Thresholds table

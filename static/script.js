@@ -855,10 +855,12 @@ async function initializeDeviceSelectionMap() {
     if (!mapContainer) return;
 
     if (!deviceSelectMap) {
-        deviceSelectMap = L.map('deviceSelectMap').setView([20.5937, 78.9629], 4); // India center as default
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(deviceSelectMap);
+        deviceSelectMap = new google.maps.Map(mapContainer, {
+            center: { lat: 20.5937, lng: 78.9629 },
+            zoom: 4,
+            mapTypeControl: true,
+            streetViewControl: false
+        });
     }
 
     async function fetchLocations() {
@@ -868,26 +870,41 @@ async function initializeDeviceSelectionMap() {
     }
 
     function clearMarkers() {
-        deviceSelectMarkers.forEach(m => deviceSelectMap.removeLayer(m));
+        deviceSelectMarkers.forEach(m => m.setMap(null));
         deviceSelectMarkers = [];
     }
 
     function addMarkers(devices) {
         clearMarkers();
-        const bounds = [];
+        const bounds = new google.maps.LatLngBounds();
+        let validLocations = 0;
+
         devices.forEach(d => {
             if (!Number.isFinite(d.gps_lat) || !Number.isFinite(d.gps_lon)) return;
-            const marker = L.marker([d.gps_lat, d.gps_lon]);
-            marker.bindPopup(`${d.name || d.deviceid}`);
-            marker.on('click', () => {
+            const latLng = { lat: d.gps_lat, lng: d.gps_lon };
+            
+            const marker = new google.maps.Marker({
+                position: latLng,
+                map: deviceSelectMap,
+                title: d.name || d.deviceid
+            });
+
+            const infowindow = new google.maps.InfoWindow({
+                content: `<div class="p-2"><strong>${d.name || d.deviceid}</strong></div>`
+            });
+
+            marker.addListener('click', () => {
+                infowindow.open(deviceSelectMap, marker);
                 selectDeviceById(d.id);
             });
-            marker.addTo(deviceSelectMap);
+
             deviceSelectMarkers.push(marker);
-            bounds.push([d.gps_lat, d.gps_lon]);
+            bounds.extend(latLng);
+            validLocations++;
         });
-        if (bounds.length) {
-            deviceSelectMap.fitBounds(bounds, { padding: [20, 20] });
+
+        if (validLocations > 0) {
+            deviceSelectMap.fitBounds(bounds);
         }
     }
 
@@ -918,8 +935,9 @@ async function initializeDeviceSelectionMap() {
     const fitBtn = document.getElementById('fitDeviceMapBtn');
     if (refreshBtn) refreshBtn.addEventListener('click', refreshMarkers);
     if (fitBtn) fitBtn.addEventListener('click', () => {
-        const latlngs = deviceSelectMarkers.map(m => m.getLatLng());
-        if (latlngs.length) deviceSelectMap.fitBounds(L.latLngBounds(latlngs), { padding: [20, 20] });
+        const bounds = new google.maps.LatLngBounds();
+        deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
+        if (deviceSelectMarkers.length) deviceSelectMap.fitBounds(bounds);
     });
 
     await refreshMarkers();
@@ -3074,8 +3092,8 @@ function initializeMap() {
     if (!mapContainer || map) return;
     
     map = L.map('deviceMap').setView([20.5937, 78.9629], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors © CARTO'
     }).addTo(map);
     
     deviceMarker = L.marker([20.5937, 78.9629]).addTo(map);
@@ -3313,8 +3331,8 @@ function initializeMap() {
     
     map = L.map('map').setView([0, 0], 2);
     
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap contributors © CARTO'
     }).addTo(map);
 }
 
@@ -3682,10 +3700,14 @@ function initializeMapToggle() {
             mapToggleIcon.className = 'fas fa-times';
             mapToggleText.textContent = 'Hide Map';
             
-            // Initialize map when first shown
             setTimeout(() => {
                 if (deviceSelectMap) {
-                    deviceSelectMap.invalidateSize();
+                    google.maps.event.trigger(deviceSelectMap, 'resize');
+                    if (deviceSelectMarkers.length > 0) {
+                        const bounds = new google.maps.LatLngBounds();
+                        deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
+                        deviceSelectMap.fitBounds(bounds);
+                    }
                 } else {
                     initializeDeviceSelectionMap();
                 }
@@ -3802,39 +3824,6 @@ function checkThresholds(data) {
     if (alertsBadge) alertsBadge.textContent = alerts.length;
 }
 
-function initializeMapToggle() {
-    const toggleMapBtn = document.getElementById('toggleMapView');
-    const mapContainer = document.getElementById('mapSelectionContainer');
-    const mapToggleIcon = document.getElementById('mapToggleIcon');
-    const mapToggleText = document.getElementById('mapToggleText');
-    
-    if (!toggleMapBtn || !mapContainer) return;
-    
-    let mapVisible = false;
-    
-    toggleMapBtn.addEventListener('click', function() {
-        mapVisible = !mapVisible;
-        
-        if (mapVisible) {
-            mapContainer.style.display = 'block';
-            mapToggleIcon.className = 'fas fa-times';
-            mapToggleText.textContent = 'Hide Map';
-            
-            // Initialize map when first shown
-            setTimeout(() => {
-                if (deviceSelectMap) {
-                    deviceSelectMap.invalidateSize();
-                } else {
-                    initializeDeviceSelectionMap();
-                }
-            }, 100);
-        } else {
-            mapContainer.style.display = 'none';
-            mapToggleIcon.className = 'fas fa-map';
-            mapToggleText.textContent = 'Show Map';
-        }
-    });
-}
 
 // Add auto-select and refresh functionality
 function initializeDeviceQuickActions() {
@@ -4429,9 +4418,9 @@ function exportData() {
         return;
     }
     
-    const url = `/api/export_csv?deviceid=${currentDeviceId}&start_date=${startDate}&end_date=${endDate}`;
+    const url = `${API_BASE_URL}/api/export_json?deviceid=${currentDeviceId}&start_date=${startDate}&end_date=${endDate}`;
     window.open(url, '_blank');
-    createAlert('Export started - check your downloads', 'success');
+    createAlert('JSON Export started - check your downloads', 'success');
 }
 
 function setDefaultDates() {
