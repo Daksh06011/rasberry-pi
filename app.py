@@ -672,10 +672,21 @@ def process_compact_format_data(payload, device_id_db, timestamp, data_source_id
     tsp_um = pm_data[4] if len(pm_data) > 4 else None
     
     # GPS data
-    gps_lat = gps_data.get("lat")
-    gps_lon = gps_data.get("lon")
-    gps_alt = None  # Not provided in this format
-    gps_speed = None  # Not provided in this format
+    if isinstance(gps_data, dict):
+        gps_lat = gps_data.get("lat")
+        gps_lon = gps_data.get("lon")
+        gps_alt = gps_data.get("alt")
+        gps_speed = gps_data.get("speed")
+    elif isinstance(gps_data, list):
+        gps_lat = gps_data[0] if len(gps_data) > 0 else None
+        gps_lon = gps_data[1] if len(gps_data) > 1 else None
+        gps_alt = gps_data[2] if len(gps_data) > 2 else None
+        gps_speed = gps_data[3] if len(gps_data) > 3 else None
+    else:
+        gps_lat = None
+        gps_lon = None
+        gps_alt = None
+        gps_speed = None
     
     # Handle timestamp
     timestamp_str = payload.get("t")

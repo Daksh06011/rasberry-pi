@@ -1626,15 +1626,15 @@ function initializeExtendedCharts() {
             data: {
                 labels: [],
                 datasets: [
-                    { ...createDatasetConfig('PM1 (μg/m³)', colorScheme.pm1), yAxisID: 'y-pm', tension: 0.35 },
+                    { ...createDatasetConfig('PM1 (μg/m³)', colorScheme.pm1), yAxisID: 'y-pm', tension: 0.35, hidden: true },
                     { ...createDatasetConfig('PM2.5 (μg/m³)', colorScheme.pm2_5), yAxisID: 'y-pm', tension: 0.35 },
                     { ...createDatasetConfig('PM10 (μg/m³)', colorScheme.pm10), yAxisID: 'y-pm', tension: 0.35 },
                     { ...createDatasetConfig('Temperature (°C)', colorScheme.temperature), yAxisID: 'y-temp', tension: 0.35 },
                     { ...createDatasetConfig('Humidity (%)', colorScheme.humidity), yAxisID: 'y-humid', tension: 0.35 },
-                    { ...createDatasetConfig('Pressure (hPa)', colorScheme.pressure), yAxisID: 'y-pressure', tension: 0.35 },
-                    { ...createDatasetConfig('VOC (ppb)', colorScheme.voc), yAxisID: 'y-air', tension: 0.35 },
-                    { ...createDatasetConfig('NO2 (ppb)', colorScheme.no2), yAxisID: 'y-air', tension: 0.35 },
-                    { ...createDatasetConfig('Noise (dB)', colorScheme.noise), yAxisID: 'y-noise', tension: 0.35 }
+                    { ...createDatasetConfig('Pressure (hPa)', colorScheme.pressure), yAxisID: 'y-pressure', tension: 0.35, hidden: true },
+                    { ...createDatasetConfig('VOC (ppb)', colorScheme.voc), yAxisID: 'y-air', tension: 0.35, hidden: true },
+                    { ...createDatasetConfig('NO2 (ppb)', colorScheme.no2), yAxisID: 'y-air', tension: 0.35, hidden: true },
+                    { ...createDatasetConfig('Noise (dB)', colorScheme.noise), yAxisID: 'y-noise', tension: 0.35, hidden: true }
                 ]
             },
             options: {
@@ -1737,9 +1737,9 @@ function initializeExtendedCharts() {
                 labels: [],
                 datasets: [
                     // PM datasets
-                    { ...createDatasetConfig('PM1', colorScheme.pm1), yAxisID: 'y-pm' },
+                    { ...createDatasetConfig('PM1', colorScheme.pm1), yAxisID: 'y-pm', hidden: true },
                     { ...createDatasetConfig('PM2.5', colorScheme.pm2_5), yAxisID: 'y-pm' },
-                    { ...createDatasetConfig('PM4', colorScheme.pm4), yAxisID: 'y-pm' },
+                    { ...createDatasetConfig('PM4', colorScheme.pm4), yAxisID: 'y-pm', hidden: true },
                     { ...createDatasetConfig('PM10', colorScheme.pm10), yAxisID: 'y-pm' },
                     // Environmental datasets - using premium dataset helper
                     { ...createDatasetConfig('Temperature (°C)', colorScheme.temperature), yAxisID: 'y-temp' },
@@ -2382,53 +2382,136 @@ function updateCharts(data) {
         return;
     }
 
-    // Update PM Time Chart
-    if (charts.timeChart && data.history.timestamps) {
-        const timestamps = data.history.timestamps.map(t => new Date(t));
+    // --- Chronological Sorting & Timeline Merging & Alignment ---
+    const pmTimestamps = data.history.timestamps || [];
+    const extHistory = data.history.extended || {};
+    const extTimestamps = extHistory.timestamps || [];
+    
+    // Helper to safely parse and normalize timestamp representations
+    const parseTime = (t) => {
+        if (!t) return null;
+        const s = typeof t === 'string' ? t.replace(' ', 'T') : t;
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    };
 
-        charts.timeChart.data.labels = timestamps;
-        charts.timeChart.data.datasets[0].data = data.history.pm1 || [];
-        charts.timeChart.data.datasets[1].data = data.history.pm2_5 || [];
-        charts.timeChart.data.datasets[2].data = data.history.pm4 || [];
-        charts.timeChart.data.datasets[3].data = data.history.pm10 || [];
-        charts.timeChart.data.datasets[4].data = data.history.tsp || [];
+    // 1. Sort standard PM data chronologically
+    const pmPoints = [];
+    for (let i = 0; i < pmTimestamps.length; i++) {
+        const d = parseTime(pmTimestamps[i]);
+        if (d) {
+            pmPoints.push({
+                date: d,
+                pm1: data.history.pm1 ? data.history.pm1[i] : null,
+                pm2_5: data.history.pm2_5 ? data.history.pm2_5[i] : null,
+                pm4: data.history.pm4 ? data.history.pm4[i] : null,
+                pm10: data.history.pm10 ? data.history.pm10[i] : null,
+                tsp: data.history.tsp ? data.history.tsp[i] : null
+            });
+        }
+    }
+    pmPoints.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    const sortedPmTimestamps = pmPoints.map(p => p.date);
+    const sortedPm1 = pmPoints.map(p => p.pm1);
+    const sortedPm2_5 = pmPoints.map(p => p.pm2_5);
+    const sortedPm4 = pmPoints.map(p => p.pm4);
+    const sortedPm10 = pmPoints.map(p => p.pm10);
+    const sortedTsp = pmPoints.map(p => p.tsp);
+
+    // 2. Sort extended environmental data chronologically
+    const extPoints = [];
+    for (let i = 0; i < extTimestamps.length; i++) {
+        const d = parseTime(extTimestamps[i]);
+        if (d) {
+            extPoints.push({
+                date: d,
+                temperature_c: extHistory.temperature_c ? extHistory.temperature_c[i] : null,
+                humidity_percent: extHistory.humidity_percent ? extHistory.humidity_percent[i] : null
+            });
+        }
+    }
+    extPoints.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    const sortedExtTimestamps = extPoints.map(p => p.date);
+    const sortedTemp = extPoints.map(p => p.temperature_c);
+    const sortedHumid = extPoints.map(p => p.humidity_percent);
+
+    // 3. Merge standard and extended timelines for unified charts
+    const combinedUniqueTimes = new Set();
+    sortedPmTimestamps.forEach(d => combinedUniqueTimes.add(d.getTime()));
+    sortedExtTimestamps.forEach(d => combinedUniqueTimes.add(d.getTime()));
+    
+    const sortedCombinedTimes = Array.from(combinedUniqueTimes).sort((a, b) => a - b);
+    const sortedCombinedTimestamps = sortedCombinedTimes.map(t => new Date(t));
+
+    // Create maps for alignment
+    const pmMap = { pm1: new Map(), pm2_5: new Map(), pm4: new Map(), pm10: new Map() };
+    for (let i = 0; i < sortedPmTimestamps.length; i++) {
+        const timeMs = sortedPmTimestamps[i].getTime();
+        if (sortedPm1[i] !== null && sortedPm1[i] !== undefined) pmMap.pm1.set(timeMs, sortedPm1[i]);
+        if (sortedPm2_5[i] !== null && sortedPm2_5[i] !== undefined) pmMap.pm2_5.set(timeMs, sortedPm2_5[i]);
+        if (sortedPm4[i] !== null && sortedPm4[i] !== undefined) pmMap.pm4.set(timeMs, sortedPm4[i]);
+        if (sortedPm10[i] !== null && sortedPm10[i] !== undefined) pmMap.pm10.set(timeMs, sortedPm10[i]);
+    }
+    
+    const extMap = { temp: new Map(), humid: new Map() };
+    for (let i = 0; i < sortedExtTimestamps.length; i++) {
+        const timeMs = sortedExtTimestamps[i].getTime();
+        if (sortedTemp[i] !== null && sortedTemp[i] !== undefined) extMap.temp.set(timeMs, sortedTemp[i]);
+        if (sortedHumid[i] !== null && sortedHumid[i] !== undefined) extMap.humid.set(timeMs, sortedHumid[i]);
+    }
+
+    const alignedPm1 = sortedCombinedTimes.map(t => pmMap.pm1.has(t) ? Number(pmMap.pm1.get(t)) : null);
+    const alignedPm2_5 = sortedCombinedTimes.map(t => pmMap.pm2_5.has(t) ? Number(pmMap.pm2_5.get(t)) : null);
+    const alignedPm4 = sortedCombinedTimes.map(t => pmMap.pm4.has(t) ? Number(pmMap.pm4.get(t)) : null);
+    const alignedPm10 = sortedCombinedTimes.map(t => pmMap.pm10.has(t) ? Number(pmMap.pm10.get(t)) : null);
+    
+    const alignedTemp = sortedCombinedTimes.map(t => extMap.temp.has(t) ? Number(extMap.temp.get(t)) : null);
+    const alignedHumid = sortedCombinedTimes.map(t => extMap.humid.has(t) ? Number(extMap.humid.get(t)) : null);
+
+    // Update PM Time Chart
+    if (charts.timeChart && sortedPmTimestamps.length) {
+        charts.timeChart.data.labels = sortedPmTimestamps;
+        charts.timeChart.data.datasets[0].data = sortedPm1;
+        charts.timeChart.data.datasets[1].data = sortedPm2_5;
+        charts.timeChart.data.datasets[2].data = sortedPm4;
+        charts.timeChart.data.datasets[3].data = sortedPm10;
+        charts.timeChart.data.datasets[4].data = sortedTsp;
 
         // Handle suggestedMax and rigid axes logic safely
         try {
             const allVals = [].concat(
-                data.history.pm1 || [],
-                data.history.pm2_5 || [],
-                data.history.pm4 || [],
-                data.history.pm10 || [],
-                data.history.tsp || []
+                sortedPm1 || [],
+                sortedPm2_5 || [],
+                sortedPm4 || [],
+                sortedPm10 || [],
+                sortedTsp || []
             ).map(Number).filter(v => !isNaN(v) && v != null);
 
             const maxVal = allVals.length ? Math.max(...allVals) : 50;
 
             if (rigidAxesEnabled) {
-                // Ensure rigidMax is at least 50 to prevent zero-scale rendering bugs
                 const rigidMax = Math.max(50, Math.ceil(maxVal * 1.1 / 50) * 50);
                 rigidMaxByChart['timeChart'] = rigidMax;
                 if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
                 if (!charts.timeChart.options.scales.y) charts.timeChart.options.scales.y = {};
                 charts.timeChart.options.scales.y.max = rigidMax;
             } else {
-                // Add buffer and round up to sensible tick (10/50/100)
                 const buffer = Math.max(10, Math.round(maxVal * 0.25));
                 const suggestedMax = Math.max(50, Math.ceil((maxVal + buffer) / 10) * 10);
                 if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
                 if (!charts.timeChart.options.scales.y) charts.timeChart.options.scales.y = {};
                 charts.timeChart.options.scales.y.suggestedMax = suggestedMax;
-                // Remove absolute max to let Chart.js scale it dynamically
                 delete charts.timeChart.options.scales.y.max;
             }
         } catch (e) {
             console.warn('Failed to compute suggestedMax/rigidMax for chart:', e);
         }
 
-        // Compute a simple moving average for PM2.5 to aid readability
+        // Compute moving average
         try {
-            const pm = (charts.timeChart.data.datasets[1].data || []).map(Number);
+            const pm = (sortedPm2_5 || []).map(Number);
             const n = pm.length;
             const windowSize = n > 24 ? 12 : (n > 8 ? 6 : 3);
             const ma = new Array(n).fill(null);
@@ -2446,23 +2529,19 @@ function updateCharts(data) {
     }
 
     // Update Unified Chart
-    if (charts.unifiedChart && data.history.timestamps) {
-        const timestamps = data.history.timestamps.map(t => new Date(t));
-        
-        const tempData = data.extended?.temperature_c ? 
-            Array(timestamps.length).fill(data.extended.temperature_c) : 
-            (data.history.temperature || []);
-        const humidityData = data.extended?.humidity_percent ? 
-            Array(timestamps.length).fill(data.extended.humidity_percent) : 
-            (data.history.humidity || []);
+    if (charts.unifiedChart && sortedCombinedTimestamps.length) {
+        const finalTempData = alignedTemp.some(v => v !== null) ? alignedTemp : 
+            (data.extended?.temperature_c ? Array(sortedCombinedTimestamps.length).fill(Number(data.extended.temperature_c)) : []);
+        const finalHumidityData = alignedHumid.some(v => v !== null) ? alignedHumid : 
+            (data.extended?.humidity_percent ? Array(sortedCombinedTimestamps.length).fill(Number(data.extended.humidity_percent)) : []);
 
-        charts.unifiedChart.data.labels = timestamps;
-        charts.unifiedChart.data.datasets[0].data = data.history.pm1 || [];
-        charts.unifiedChart.data.datasets[1].data = data.history.pm2_5 || [];
-        charts.unifiedChart.data.datasets[2].data = data.history.pm4 || [];
-        charts.unifiedChart.data.datasets[3].data = data.history.pm10 || [];
-        charts.unifiedChart.data.datasets[4].data = tempData;
-        charts.unifiedChart.data.datasets[5].data = humidityData;
+        charts.unifiedChart.data.labels = sortedCombinedTimestamps;
+        charts.unifiedChart.data.datasets[0].data = alignedPm1;
+        charts.unifiedChart.data.datasets[1].data = alignedPm2_5;
+        charts.unifiedChart.data.datasets[2].data = alignedPm4;
+        charts.unifiedChart.data.datasets[3].data = alignedPm10;
+        charts.unifiedChart.data.datasets[4].data = finalTempData;
+        charts.unifiedChart.data.datasets[5].data = finalHumidityData;
 
         safeChartUpdate(charts.unifiedChart, 'unifiedChart');
         updateUnifiedChartStatistics(data);
@@ -3522,44 +3601,142 @@ function updateExtendedCharts(data) {
 
     console.log('updateExtendedCharts called with:', data);
 
-    const extendedData = data.extended || {};
-    const history = data.history || {};
-    const extendedHistory = history.extended || {};
-
     if (!charts.environmentalCombinedChart) {
         return;
     }
 
-    const timestampSource = history.timestamps || extendedHistory.timestamps || [];
-    if (!timestampSource.length) {
-        return;
-    }
-
-    const timestamps = timestampSource.map(t => {
-        const normalized = typeof t === 'string' ? t.replace(' ', 'T') : t;
-        const d = new Date(normalized);
-        return isNaN(d.getTime()) ? new Date() : d;
-    });
-    const seriesFrom = (primary, fallback, singleValue) => {
-        if (Array.isArray(primary) && primary.length) return primary;
-        if (Array.isArray(fallback) && fallback.length) return fallback;
-        if (singleValue !== undefined && singleValue !== null && singleValue !== '') {
-            return Array(timestamps.length).fill(Number(singleValue));
-        }
-        return [];
+    const pmTimestamps = data.history && data.history.timestamps ? data.history.timestamps : [];
+    const extHistory = data.history && data.history.extended ? data.history.extended : {};
+    const extTimestamps = extHistory.timestamps || [];
+    
+    // Normalize and parse timestamps safely
+    const parseTime = (t) => {
+        if (!t) return null;
+        const s = typeof t === 'string' ? t.replace(' ', 'T') : t;
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
     };
 
-    charts.environmentalCombinedChart.data.labels = timestamps;
+    // 1. Sort standard PM data chronologically
+    const pmPoints = [];
+    for (let i = 0; i < pmTimestamps.length; i++) {
+        const d = parseTime(pmTimestamps[i]);
+        if (d) {
+            pmPoints.push({
+                date: d,
+                pm1: data.history.pm1 ? data.history.pm1[i] : null,
+                pm2_5: data.history.pm2_5 ? data.history.pm2_5[i] : null,
+                pm10: data.history.pm10 ? data.history.pm10[i] : null
+            });
+        }
+    }
+    pmPoints.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    const sortedPmTimestamps = pmPoints.map(p => p.date);
+    const sortedPm1 = pmPoints.map(p => p.pm1);
+    const sortedPm2_5 = pmPoints.map(p => p.pm2_5);
+    const sortedPm10 = pmPoints.map(p => p.pm10);
+
+    // 2. Sort extended environmental data chronologically
+    const extPoints = [];
+    for (let i = 0; i < extTimestamps.length; i++) {
+        const d = parseTime(extTimestamps[i]);
+        if (d) {
+            extPoints.push({
+                date: d,
+                temperature_c: extHistory.temperature_c ? extHistory.temperature_c[i] : null,
+                humidity_percent: extHistory.humidity_percent ? extHistory.humidity_percent[i] : null,
+                pressure_hpa: extHistory.pressure_hpa ? extHistory.pressure_hpa[i] : null,
+                voc_ppb: extHistory.voc_ppb ? extHistory.voc_ppb[i] : null,
+                no2_ppb: extHistory.no2_ppb ? extHistory.no2_ppb[i] : null,
+                noise_db: extHistory.noise_db ? extHistory.noise_db[i] : null
+            });
+        }
+    }
+    extPoints.sort((a, b) => a.date.getTime() - b.date.getTime());
+    
+    const sortedExtTimestamps = extPoints.map(p => p.date);
+    const sortedTemp = extPoints.map(p => p.temperature_c);
+    const sortedHumid = extPoints.map(p => p.humidity_percent);
+    const sortedPressure = extPoints.map(p => p.pressure_hpa);
+    const sortedVoc = extPoints.map(p => p.voc_ppb);
+    const sortedNo2 = extPoints.map(p => p.no2_ppb);
+    const sortedNoise = extPoints.map(p => p.noise_db);
+
+    // 3. Merge standard and extended timelines for a combined time-series chart
+    const combinedUniqueTimes = new Set();
+    sortedPmTimestamps.forEach(d => combinedUniqueTimes.add(d.getTime()));
+    sortedExtTimestamps.forEach(d => combinedUniqueTimes.add(d.getTime()));
+    
+    const sortedCombinedTimes = Array.from(combinedUniqueTimes).sort((a, b) => a - b);
+    const sortedCombinedTimestamps = sortedCombinedTimes.map(t => new Date(t));
+
+    if (!sortedCombinedTimestamps.length) {
+        return;
+    }
+    
+    // Create maps for alignment
+    const pmMap = { pm1: new Map(), pm2_5: new Map(), pm10: new Map() };
+    for (let i = 0; i < sortedPmTimestamps.length; i++) {
+        const timeMs = sortedPmTimestamps[i].getTime();
+        if (sortedPm1[i] !== null && sortedPm1[i] !== undefined) pmMap.pm1.set(timeMs, sortedPm1[i]);
+        if (sortedPm2_5[i] !== null && sortedPm2_5[i] !== undefined) pmMap.pm2_5.set(timeMs, sortedPm2_5[i]);
+        if (sortedPm10[i] !== null && sortedPm10[i] !== undefined) pmMap.pm10.set(timeMs, sortedPm10[i]);
+    }
+    
+    const extMap = {
+        temp: new Map(), humid: new Map(), pressure: new Map(),
+        voc: new Map(), no2: new Map(), noise: new Map()
+    };
+    for (let i = 0; i < sortedExtTimestamps.length; i++) {
+        const timeMs = sortedExtTimestamps[i].getTime();
+        if (sortedTemp[i] !== null && sortedTemp[i] !== undefined) extMap.temp.set(timeMs, sortedTemp[i]);
+        if (sortedHumid[i] !== null && sortedHumid[i] !== undefined) extMap.humid.set(timeMs, sortedHumid[i]);
+        if (sortedPressure[i] !== null && sortedPressure[i] !== undefined) extMap.pressure.set(timeMs, sortedPressure[i]);
+        if (sortedVoc[i] !== null && sortedVoc[i] !== undefined) extMap.voc.set(timeMs, sortedVoc[i]);
+        if (sortedNo2[i] !== null && sortedNo2[i] !== undefined) extMap.no2.set(timeMs, sortedNo2[i]);
+        if (sortedNoise[i] !== null && sortedNoise[i] !== undefined) extMap.noise.set(timeMs, sortedNoise[i]);
+    }
+    
+    // Map mapped values to combined timeline
+    const alignedPm1 = sortedCombinedTimes.map(t => pmMap.pm1.has(t) ? Number(pmMap.pm1.get(t)) : null);
+    const alignedPm2_5 = sortedCombinedTimes.map(t => pmMap.pm2_5.has(t) ? Number(pmMap.pm2_5.get(t)) : null);
+    const alignedPm10 = sortedCombinedTimes.map(t => pmMap.pm10.has(t) ? Number(pmMap.pm10.get(t)) : null);
+    
+    const alignedTemp = sortedCombinedTimes.map(t => extMap.temp.has(t) ? Number(extMap.temp.get(t)) : null);
+    const alignedHumid = sortedCombinedTimes.map(t => extMap.humid.has(t) ? Number(extMap.humid.get(t)) : null);
+    const alignedPressure = sortedCombinedTimes.map(t => extMap.pressure.has(t) ? Number(extMap.pressure.get(t)) : null);
+    const alignedVoc = sortedCombinedTimes.map(t => extMap.voc.has(t) ? Number(extMap.voc.get(t)) : null);
+    const alignedNo2 = sortedCombinedTimes.map(t => extMap.no2.has(t) ? Number(extMap.no2.get(t)) : null);
+    const alignedNoise = sortedCombinedTimes.map(t => extMap.noise.has(t) ? Number(extMap.noise.get(t)) : null);
+
+    // If extended data doesn't have history but has a single current value, fallback to array filling
+    const extendedData = data.extended || {};
+    const finalTemp = alignedTemp.some(v => v !== null) ? alignedTemp : 
+        (extendedData.temperature_c ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.temperature_c)) : []);
+    const finalHumid = alignedHumid.some(v => v !== null) ? alignedHumid : 
+        (extendedData.humidity_percent ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.humidity_percent)) : []);
+    const finalPressure = alignedPressure.some(v => v !== null) ? alignedPressure : 
+        (extendedData.pressure_hpa ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.pressure_hpa)) : []);
+    const finalVoc = alignedVoc.some(v => v !== null) ? alignedVoc : 
+        (extendedData.voc_ppb !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.voc_ppb)) : []);
+    const finalNo2 = alignedNo2.some(v => v !== null) ? alignedNo2 : 
+        (extendedData.no2_ppb !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.no2_ppb)) : []);
+    const finalNoise = alignedNoise.some(v => v !== null) ? alignedNoise : 
+        (extendedData.noise_db !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.noise_db)) : 
+         (extendedData.sound !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.sound)) : []));
+
+    charts.environmentalCombinedChart.data.labels = sortedCombinedTimestamps;
     const datasetsConfig = [
-        { label: 'PM1:', unit: 'μg/m³', data: data.history.pm1 || [], color: colorScheme.pm1 },
-        { label: 'PM2.5:', unit: 'μg/m³', data: data.history.pm2_5 || [], color: colorScheme.pm2_5 },
-        { label: 'PM10:', unit: 'μg/m³', data: data.history.pm10 || [], color: colorScheme.pm10 },
-        { label: 'Temperature:', unit: '°C', data: seriesFrom(history.temperature, extendedHistory.temperature_c, extendedData.temperature_c), color: colorScheme.temperature },
-        { label: 'Humidity:', unit: '%', data: seriesFrom(history.humidity, extendedHistory.humidity_percent, extendedData.humidity_percent), color: colorScheme.humidity },
-        { label: 'Pressure:', unit: 'hPa', data: seriesFrom(history.pressure, extendedHistory.pressure_hpa, extendedData.pressure_hpa), color: colorScheme.pressure },
-        { label: 'VOC:', unit: 'ppb', data: seriesFrom(history.voc, extendedHistory.voc_ppb, extendedData.voc_ppb), color: colorScheme.voc },
-        { label: 'NO2:', unit: 'ppb', data: seriesFrom(history.no2, extendedHistory.no2_ppb, extendedData.no2_ppb), color: colorScheme.no2 },
-        { label: 'Noise:', unit: 'dB', data: seriesFrom(history.noise, extendedHistory.noise_db, extendedData.noise_db), color: colorScheme.noise }
+        { label: 'PM1:', unit: 'μg/m³', data: alignedPm1, color: colorScheme.pm1 },
+        { label: 'PM2.5:', unit: 'μg/m³', data: alignedPm2_5, color: colorScheme.pm2_5 },
+        { label: 'PM10:', unit: 'μg/m³', data: alignedPm10, color: colorScheme.pm10 },
+        { label: 'Temperature:', unit: '°C', data: finalTemp, color: colorScheme.temperature },
+        { label: 'Humidity:', unit: '%', data: finalHumid, color: colorScheme.humidity },
+        { label: 'Pressure:', unit: 'hPa', data: finalPressure, color: colorScheme.pressure },
+        { label: 'VOC:', unit: 'ppb', data: finalVoc, color: colorScheme.voc },
+        { label: 'NO2:', unit: 'ppb', data: finalNo2, color: colorScheme.no2 },
+        { label: 'Noise:', unit: 'dB', data: finalNoise, color: colorScheme.noise }
     ];
 
     const dynamicLegend = document.getElementById('dynamicChartLegend');
@@ -3568,7 +3745,14 @@ function updateExtendedCharts(data) {
     datasetsConfig.forEach((config, index) => {
         const hasData = config.data && config.data.some(v => v !== null && v !== undefined && v !== '');
         charts.environmentalCombinedChart.data.datasets[index].data = config.data;
-        charts.environmentalCombinedChart.data.datasets[index].hidden = !hasData;
+        if (charts.environmentalCombinedChart.data.datasets[index].hidden === undefined || charts.environmentalCombinedChart.data.datasets[index].hidden === null) {
+            const hiddenByDefault = [0, 5, 6, 7, 8]; // PM1, Pressure, VOC, NO2, Noise
+            charts.environmentalCombinedChart.data.datasets[index].hidden = !hasData || hiddenByDefault.includes(index);
+        } else {
+            if (!hasData) {
+                charts.environmentalCombinedChart.data.datasets[index].hidden = true;
+            }
+        }
 
         if (hasData && dynamicLegend) {
             const lastVal = config.data.slice().reverse().find(v => v !== null && v !== undefined && v !== '');
@@ -3611,56 +3795,83 @@ function updateExtendedCharts(data) {
 }
 
 function updateIndividualExtendedCharts(data) {
-    const extendedData = data.extended || {};
     const extendedHistory = data.history && data.history.extended ? data.history.extended : {};
-    const timestamps = extendedHistory.timestamps ? extendedHistory.timestamps.map(t => new Date(t)) : [];
+    const extTimestamps = extendedHistory.timestamps || [];
+    if (extTimestamps.length === 0) return;
 
-    console.log('updateIndividualExtendedCharts - extendedHistory:', extendedHistory);
-    console.log('updateIndividualExtendedCharts - timestamps length:', timestamps.length);
+    // Safely parse and normalize timestamp representations
+    const parseTime = (t) => {
+        if (!t) return null;
+        const s = typeof t === 'string' ? t.replace(' ', 'T') : t;
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    };
 
-    if (timestamps.length === 0) return;
+    // Sort extended history data chronologically
+    const extPoints = [];
+    for (let i = 0; i < extTimestamps.length; i++) {
+        const d = parseTime(extTimestamps[i]);
+        if (d) {
+            extPoints.push({
+                date: d,
+                voc_ppb: extendedHistory.voc_ppb ? extendedHistory.voc_ppb[i] : null,
+                no2_ppb: extendedHistory.no2_ppb ? extendedHistory.no2_ppb[i] : null,
+                noise_db: extendedHistory.noise_db ? extendedHistory.noise_db[i] : null,
+                gps_speed_kmh: extendedHistory.gps_speed_kmh ? extendedHistory.gps_speed_kmh[i] : null
+            });
+        }
+    }
+    extPoints.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    const sortedTimestamps = extPoints.map(p => p.date);
+    const sortedVoc = extPoints.map(p => p.voc_ppb);
+    const sortedNo2 = extPoints.map(p => p.no2_ppb);
+    const sortedNoise = extPoints.map(p => p.noise_db);
+    const sortedSpeed = extPoints.map(p => p.gps_speed_kmh);
+
+    console.log('updateIndividualExtendedCharts - sorted timestamps length:', sortedTimestamps.length);
 
     // VOC Chart
     if (charts.vocChart) {
-        const vocData = extendedHistory.voc_ppb || [];
-        if (vocData.length > 0) {
-            charts.vocChart.data.labels = timestamps;
-            charts.vocChart.data.datasets[0].data = vocData;
+        const vocData = sortedVoc.filter(v => v !== null);
+        if (sortedVoc.length > 0) {
+            charts.vocChart.data.labels = sortedTimestamps;
+            charts.vocChart.data.datasets[0].data = sortedVoc;
             safeChartUpdate(charts.vocChart, 'vocChart');
-            console.log('Updated VOC chart with', vocData.length, 'data points');
+            console.log('Updated VOC chart with', sortedVoc.length, 'data points');
         }
     }
 
     // NO2 Chart
     if (charts.no2Chart) {
-        const no2Data = extendedHistory.no2_ppb || [];
-        if (no2Data.length > 0) {
-            charts.no2Chart.data.labels = timestamps;
-            charts.no2Chart.data.datasets[0].data = no2Data;
+        const no2Data = sortedNo2.filter(v => v !== null);
+        if (sortedNo2.length > 0) {
+            charts.no2Chart.data.labels = sortedTimestamps;
+            charts.no2Chart.data.datasets[0].data = sortedNo2;
             safeChartUpdate(charts.no2Chart, 'no2Chart');
-            console.log('Updated NO2 chart with', no2Data.length, 'data points');
+            console.log('Updated NO2 chart with', sortedNo2.length, 'data points');
         }
     }
 
     // Noise Chart
     if (charts.noiseChart) {
-        const noiseData = extendedHistory.noise_db || [];
-        if (noiseData.length > 0) {
-            charts.noiseChart.data.labels = timestamps;
-            charts.noiseChart.data.datasets[0].data = noiseData;
+        const noiseData = sortedNoise.filter(v => v !== null);
+        if (sortedNoise.length > 0) {
+            charts.noiseChart.data.labels = sortedTimestamps;
+            charts.noiseChart.data.datasets[0].data = sortedNoise;
             safeChartUpdate(charts.noiseChart, 'noiseChart');
-            console.log('Updated Noise chart with', noiseData.length, 'data points');
+            console.log('Updated Noise chart with', sortedNoise.length, 'data points');
         }
     }
 
     // Speed Chart
     if (charts.speedChart) {
-        const speedData = extendedHistory.gps_speed_kmh || [];
-        if (speedData.length > 0) {
-            charts.speedChart.data.labels = timestamps;
-            charts.speedChart.data.datasets[0].data = speedData;
+        const speedData = sortedSpeed.filter(v => v !== null);
+        if (sortedSpeed.length > 0) {
+            charts.speedChart.data.labels = sortedTimestamps;
+            charts.speedChart.data.datasets[0].data = sortedSpeed;
             safeChartUpdate(charts.speedChart, 'speedChart');
-            console.log('Updated Speed chart with', speedData.length, 'data points');
+            console.log('Updated Speed chart with', sortedSpeed.length, 'data points');
         }
     }
 }
