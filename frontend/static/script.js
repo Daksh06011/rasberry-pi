@@ -809,9 +809,17 @@ function handleDeviceSelection() {
     if (deviceSelectMap && deviceSelectMarkers.length > 0) {
         const marker = deviceSelectMarkers.find(m => String(m.deviceId) === String(currentDeviceId));
         if (marker) {
-            deviceSelectMap.panTo(marker.getPosition());
-            if (deviceSelectMap.getZoom() < 8) {
-                deviceSelectMap.setZoom(8);
+            const pos = marker.getPosition();
+            deviceSelectMap.panTo(pos);
+            const lat = pos.lat();
+            const lng = pos.lng();
+            // Zoom out to level 4 if location is in Varanger/Barents Sea (70.0, 30.0) or default/ocean areas
+            if ((Math.abs(lat - 70.0) < 1.0 && Math.abs(lng - 30.0) < 1.0) || (lat === 0.0 && lng === 0.0)) {
+                deviceSelectMap.setZoom(4);
+            } else {
+                if (deviceSelectMap.getZoom() < 8) {
+                    deviceSelectMap.setZoom(8);
+                }
             }
             if (marker.infoWindow) {
                 marker.infoWindow.open(deviceSelectMap, marker);
@@ -957,7 +965,13 @@ async function initializeDeviceSelectionMap() {
             // Limit zoom level when bounds fit a single marker (prevent blank blue screen)
             if (validLocations === 1) {
                 google.maps.event.addListenerOnce(deviceSelectMap, 'idle', () => {
-                    if (deviceSelectMap.getZoom() > 8) {
+                    const center = bounds.getCenter();
+                    const lat = center.lat();
+                    const lng = center.lng();
+                    // Zoom out to level 4 if location is in Varanger/Barents Sea (70.0, 30.0) or default/ocean areas
+                    if ((Math.abs(lat - 70.0) < 1.0 && Math.abs(lng - 30.0) < 1.0) || (lat === 0.0 && lng === 0.0)) {
+                        deviceSelectMap.setZoom(4);
+                    } else if (deviceSelectMap.getZoom() > 8) {
                         deviceSelectMap.setZoom(8);
                     }
                 });
@@ -1068,10 +1082,14 @@ function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
     if (String(deviceId) === String(currentDeviceId)) {
         deviceSelectMap.panTo(latLng);
         // Ensure zoom is reasonable (between 5 and 8 is good for context)
-        if (deviceSelectMap.getZoom() > 8) {
-            // Keep zoom reasonable
+        if ((Math.abs(latLng.lat - 70.0) < 1.0 && Math.abs(latLng.lng - 30.0) < 1.0) || (latLng.lat === 0.0 && latLng.lng === 0.0)) {
+            deviceSelectMap.setZoom(4);
         } else {
-            deviceSelectMap.setZoom(8);
+            if (deviceSelectMap.getZoom() > 8) {
+                // Keep zoom reasonable
+            } else {
+                deviceSelectMap.setZoom(8);
+            }
         }
     }
 }
