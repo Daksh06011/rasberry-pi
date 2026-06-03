@@ -872,12 +872,11 @@ async function initializeDeviceSelectionMap() {
     if (!mapContainer) return;
 
     if (!deviceSelectMap) {
-        deviceSelectMap = new google.maps.Map(mapContainer, {
-            center: { lat: 20.5937, lng: 78.9629 },
-            zoom: 4,
-            mapTypeControl: true,
-            streetViewControl: false
-        });
+        deviceSelectMap = L.map(mapContainer).setView([20.5937, 78.9629], 4);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(deviceSelectMap);
     }
 
     async function fetchLocations() {
@@ -887,41 +886,33 @@ async function initializeDeviceSelectionMap() {
     }
 
     function clearMarkers() {
-        deviceSelectMarkers.forEach(m => m.setMap(null));
+        if (deviceSelectMarkers) {
+            deviceSelectMarkers.forEach(m => deviceSelectMap.removeLayer(m));
+        }
         deviceSelectMarkers = [];
     }
 
     function addMarkers(devices) {
         clearMarkers();
-        const bounds = new google.maps.LatLngBounds();
-        let validLocations = 0;
+        const latLngs = [];
 
         devices.forEach(d => {
             if (!Number.isFinite(d.gps_lat) || !Number.isFinite(d.gps_lon)) return;
-            const latLng = { lat: d.gps_lat, lng: d.gps_lon };
+            const latLng = [d.gps_lat, d.gps_lon];
             
-            const marker = new google.maps.Marker({
-                position: latLng,
-                map: deviceSelectMap,
-                title: d.name || d.deviceid
-            });
+            const marker = L.marker(latLng).addTo(deviceSelectMap);
+            marker.bindPopup(`<div class="p-2"><strong>${d.name || d.deviceid}</strong></div>`);
 
-            const infowindow = new google.maps.InfoWindow({
-                content: `<div class="p-2"><strong>${d.name || d.deviceid}</strong></div>`
-            });
-
-            marker.addListener('click', () => {
-                infowindow.open(deviceSelectMap, marker);
+            marker.on('click', () => {
                 selectDeviceById(d.id);
             });
 
             deviceSelectMarkers.push(marker);
-            bounds.extend(latLng);
-            validLocations++;
+            latLngs.push(latLng);
         });
 
-        if (validLocations > 0) {
-            deviceSelectMap.fitBounds(bounds);
+        if (latLngs.length > 0) {
+            deviceSelectMap.fitBounds(latLngs);
         }
     }
 
@@ -952,9 +943,10 @@ async function initializeDeviceSelectionMap() {
     const fitBtn = document.getElementById('fitDeviceMapBtn');
     if (refreshBtn) refreshBtn.addEventListener('click', refreshMarkers);
     if (fitBtn) fitBtn.addEventListener('click', () => {
-        const bounds = new google.maps.LatLngBounds();
-        deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
-        if (deviceSelectMarkers.length) deviceSelectMap.fitBounds(bounds);
+        if (deviceSelectMarkers.length) {
+            const latLngs = deviceSelectMarkers.map(m => m.getLatLng());
+            deviceSelectMap.fitBounds(latLngs);
+        }
     });
 
     await refreshMarkers();
@@ -3899,11 +3891,19 @@ function initializeMapToggle() {
             
             setTimeout(() => {
                 if (deviceSelectMap) {
-                    google.maps.event.trigger(deviceSelectMap, 'resize');
-                    if (deviceSelectMarkers.length > 0) {
-                        const bounds = new google.maps.LatLngBounds();
-                        deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
-                        deviceSelectMap.fitBounds(bounds);
+                    if (typeof deviceSelectMap.invalidateSize === 'function') {
+                        deviceSelectMap.invalidateSize();
+                        if (deviceSelectMarkers.length > 0) {
+                            const latLngs = deviceSelectMarkers.map(m => m.getLatLng());
+                            deviceSelectMap.fitBounds(latLngs);
+                        }
+                    } else if (typeof google !== 'undefined' && google.maps) {
+                        google.maps.event.trigger(deviceSelectMap, 'resize');
+                        if (deviceSelectMarkers.length > 0) {
+                            const bounds = new google.maps.LatLngBounds();
+                            deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
+                            deviceSelectMap.fitBounds(bounds);
+                        }
                     }
                 } else {
                     initializeDeviceSelectionMap();
