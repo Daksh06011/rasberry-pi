@@ -1663,11 +1663,27 @@ function initializeCharts() {
                                 const t = items[0];
                                 return t.label ? new Date(t.label).toLocaleString() : '';
                             },
-                            label: ctx => `${ctx.dataset.label}: ${Number(ctx.raw).toFixed(1)} μg/m³`
+                            label: ctx => {
+                                const val = typeof ctx.raw === 'object' && ctx.raw !== null ? ctx.raw.y : ctx.raw;
+                                return `${ctx.dataset.label}: ${Number(val).toFixed(1)} μg/m³`;
+                            }
                         }
                     },
-                    // Disable zoom plugin
-                    zoom: false
+                    zoom: {
+                        pan: {
+                            enabled: true,
+                            mode: 'x'
+                        },
+                        zoom: {
+                            wheel: {
+                                enabled: true
+                            },
+                            pinch: {
+                                enabled: true
+                            },
+                            mode: 'x'
+                        }
+                    }
                 },
                 scales: {
                     y: {
@@ -1703,9 +1719,9 @@ function initializeCharts() {
                         time: {
                             tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
                             displayFormats: {
-                                second: 'HH:mm:ss',
-                                minute: 'HH:mm',
-                                hour: 'HH:mm',
+                                second: 'h:mm:ss a',
+                                minute: 'h:mm a',
+                                hour: 'h:mm a',
                                 day: 'MMM dd'
                             }
                         },
@@ -1715,9 +1731,11 @@ function initializeCharts() {
                             borderDash: [5, 5]
                         },
                         ticks: {
+                            source: 'auto',
                             color: chartTextColor,
                             padding: 10,
-                            maxTicksLimit: 12
+                            maxTicksLimit: 12,
+                            autoSkip: true
                         },
                         title: {
                             display: true,
@@ -1888,7 +1906,22 @@ function initializeExtendedCharts() {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-            legend: { position: 'top' }
+            legend: { position: 'top' },
+            zoom: {
+                pan: {
+                    enabled: true,
+                    mode: 'x'
+                },
+                zoom: {
+                    wheel: {
+                        enabled: true
+                    },
+                    pinch: {
+                        enabled: true
+                    },
+                    mode: 'x'
+                }
+            }
         }
     };
 
@@ -1913,9 +1946,34 @@ function initializeExtendedCharts() {
             options: {
                 ...commonOptions,
                 interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    ...commonOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const val = typeof ctx.raw === 'object' && ctx.raw !== null ? ctx.raw.y : ctx.raw;
+                                return `${ctx.dataset.label}: ${Number(val).toFixed(1)}`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     x: { 
                         type: 'time',
+                        time: {
+                            tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
+                            displayFormats: {
+                                second: 'h:mm:ss a',
+                                minute: 'h:mm a',
+                                hour: 'h:mm a',
+                                day: 'MMM dd'
+                            }
+                        },
+                        ticks: {
+                            source: 'auto',
+                            maxTicksLimit: 12,
+                            autoSkip: true
+                        },
                         grid: {
                             color: chartGridColor,
                             borderDash: [5, 5],
@@ -2044,6 +2102,20 @@ function initializeExtendedCharts() {
                     x: { 
                         type: 'time', 
                         display: true,
+                        time: {
+                            tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
+                            displayFormats: {
+                                second: 'h:mm:ss a',
+                                minute: 'h:mm a',
+                                hour: 'h:mm a',
+                                day: 'MMM dd'
+                            }
+                        },
+                        ticks: {
+                            source: 'auto',
+                            maxTicksLimit: 12,
+                            autoSkip: true
+                        },
                         grid: {
                             color: chartGridColor,
                             borderDash: [5, 5],
@@ -2099,7 +2171,24 @@ function initializeDeepAnalyticsCharts() {
     const commonOptions = {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { position: 'top' } }
+        plugins: {
+            legend: { position: 'top' },
+            zoom: {
+                pan: {
+                    enabled: true,
+                    mode: 'x'
+                },
+                zoom: {
+                    wheel: {
+                        enabled: true
+                    },
+                    pinch: {
+                        enabled: true
+                    },
+                    mode: 'x'
+                }
+            }
+        }
     };
 
     // Parameter Trend Chart
@@ -2118,7 +2207,36 @@ function initializeDeepAnalyticsCharts() {
             },
             options: { 
                 ...commonOptions, 
-                scales: { x: { type: 'time' } } 
+                plugins: {
+                    ...commonOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const val = typeof ctx.raw === 'object' && ctx.raw !== null ? ctx.raw.y : ctx.raw;
+                                return `${ctx.dataset.label || 'Value'}: ${Number(val).toFixed(1)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            tooltipFormat: 'yyyy-MM-dd HH:mm:ss',
+                            displayFormats: {
+                                second: 'h:mm:ss a',
+                                minute: 'h:mm a',
+                                hour: 'h:mm a',
+                                day: 'MMM dd'
+                            }
+                        },
+                        ticks: {
+                            source: 'auto',
+                            maxTicksLimit: 12,
+                            autoSkip: true
+                        }
+                    }
+                } 
             }
         });
     }
@@ -2745,12 +2863,12 @@ function updateCharts(data) {
 
     // Update PM Time Chart
     if (charts.timeChart && sortedPmTimestamps.length) {
-        charts.timeChart.data.labels = sortedPmTimestamps;
-        charts.timeChart.data.datasets[0].data = sortedPm1;
-        charts.timeChart.data.datasets[1].data = sortedPm2_5;
-        charts.timeChart.data.datasets[2].data = sortedPm4;
-        charts.timeChart.data.datasets[3].data = sortedPm10;
-        charts.timeChart.data.datasets[4].data = sortedTsp;
+        charts.timeChart.data.labels = []; // Clear to prevent category timeline overlap
+        charts.timeChart.data.datasets[0].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm1[idx] }));
+        charts.timeChart.data.datasets[1].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm2_5[idx] }));
+        charts.timeChart.data.datasets[2].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm4[idx] }));
+        charts.timeChart.data.datasets[3].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm10[idx] }));
+        charts.timeChart.data.datasets[4].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedTsp[idx] }));
 
         // Handle suggestedMax and rigid axes logic safely
         try {
@@ -2793,7 +2911,9 @@ function updateCharts(data) {
                 const slice = pm.slice(start, i + 1).filter(v => !isNaN(v));
                 if (slice.length) ma[i] = slice.reduce((a, b) => a + b, 0) / slice.length;
             }
-            if (charts.timeChart.data.datasets[5]) charts.timeChart.data.datasets[5].data = ma;
+            if (charts.timeChart.data.datasets[5]) {
+                charts.timeChart.data.datasets[5].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: ma[idx] }));
+            }
         } catch (e) {
             console.warn('Failed to compute moving average:', e);
         }
@@ -2808,13 +2928,13 @@ function updateCharts(data) {
         const finalHumidityData = alignedHumid.some(v => v !== null) ? alignedHumid : 
             (data.extended?.humidity_percent ? Array(sortedCombinedTimestamps.length).fill(Number(data.extended.humidity_percent)) : []);
 
-        charts.unifiedChart.data.labels = sortedCombinedTimestamps;
-        charts.unifiedChart.data.datasets[0].data = alignedPm1;
-        charts.unifiedChart.data.datasets[1].data = alignedPm2_5;
-        charts.unifiedChart.data.datasets[2].data = alignedPm4;
-        charts.unifiedChart.data.datasets[3].data = alignedPm10;
-        charts.unifiedChart.data.datasets[4].data = finalTempData;
-        charts.unifiedChart.data.datasets[5].data = finalHumidityData;
+        charts.unifiedChart.data.labels = []; // Clear labels
+        charts.unifiedChart.data.datasets[0].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm1[idx] }));
+        charts.unifiedChart.data.datasets[1].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm2_5[idx] }));
+        charts.unifiedChart.data.datasets[2].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm4[idx] }));
+        charts.unifiedChart.data.datasets[3].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm10[idx] }));
+        charts.unifiedChart.data.datasets[4].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: finalTempData[idx] }));
+        charts.unifiedChart.data.datasets[5].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: finalHumidityData[idx] }));
 
         safeChartUpdate(charts.unifiedChart, 'unifiedChart');
         updateUnifiedChartStatistics(data);
@@ -2864,8 +2984,8 @@ function updateDeepAnalyticsCharts(data) {
         const selectedParam = document.getElementById('paramSelect')?.value || 'pm2_5';
         const paramData = data.history[selectedParam] || data.history.pm2_5 || [];
         
-        charts.paramTrendChart.data.labels = timestamps;
-        charts.paramTrendChart.data.datasets[0].data = paramData;
+        charts.paramTrendChart.data.labels = [];
+        charts.paramTrendChart.data.datasets[0].data = timestamps.map((t, idx) => ({ x: t, y: paramData[idx] }));
         charts.paramTrendChart.data.datasets.label = getParameterLabel(selectedParam);
         
         safeChartUpdate(charts.paramTrendChart, 'paramTrendChart');
@@ -2955,8 +3075,8 @@ function updateParameterTrendChart(parameter) {
                 const timestamps = data.history.timestamps.map(t => new Date(t));
                 const paramData = data.history[parameter] || [];
                 
-                charts.paramTrendChart.data.labels = timestamps;
-                charts.paramTrendChart.data.datasets[0].data = paramData;
+                charts.paramTrendChart.data.labels = [];
+                charts.paramTrendChart.data.datasets[0].data = timestamps.map((t, idx) => ({ x: t, y: paramData[idx] }));
                 charts.paramTrendChart.data.datasets.label = getParameterLabel(parameter);
                 
                 safeChartUpdate(charts.paramTrendChart, 'paramTrendChart');
@@ -3327,23 +3447,21 @@ function displayDynamicMQTTData(mqttData) {
     
     // Feed data into the existing timeChart
     if (charts.timeChart) {
-        if (!charts.timeChart.data.labels) charts.timeChart.data.labels = [];
+        charts.timeChart.data.labels = []; // Keep empty
         if (!charts.timeChart.data.datasets[0].data) charts.timeChart.data.datasets[0].data = [];
         if (!charts.timeChart.data.datasets[1].data) charts.timeChart.data.datasets[1].data = [];
         if (!charts.timeChart.data.datasets[2].data) charts.timeChart.data.datasets[2].data = [];
         if (!charts.timeChart.data.datasets[3].data) charts.timeChart.data.datasets[3].data = [];
         
         // Add new data point
-        charts.timeChart.data.labels.push(timestamp);
-        charts.timeChart.data.datasets[0].data.push(pm1);
-        charts.timeChart.data.datasets[1].data.push(pm25);
-        charts.timeChart.data.datasets[2].data.push(pm4);
-        charts.timeChart.data.datasets[3].data.push(pm10);
+        charts.timeChart.data.datasets[0].data.push({ x: timestamp, y: pm1 });
+        charts.timeChart.data.datasets[1].data.push({ x: timestamp, y: pm25 });
+        charts.timeChart.data.datasets[2].data.push({ x: timestamp, y: pm4 });
+        charts.timeChart.data.datasets[3].data.push({ x: timestamp, y: pm10 });
         
         // Keep only last 30 points
         const maxPoints = 30;
-        if (charts.timeChart.data.labels.length > maxPoints) {
-            charts.timeChart.data.labels.shift();
+        if (charts.timeChart.data.datasets[0].data.length > maxPoints) {
             charts.timeChart.data.datasets.forEach(ds => ds.data.shift());
         }
         
@@ -3971,7 +4089,7 @@ function updateExtendedCharts(data) {
         (extendedData.noise_db !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.noise_db)) : 
          (extendedData.sound !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.sound)) : []));
 
-    charts.environmentalCombinedChart.data.labels = sortedCombinedTimestamps;
+    charts.environmentalCombinedChart.data.labels = []; // Clear labels
     const datasetsConfig = [
         { label: 'PM1:', unit: 'μg/m³', data: alignedPm1, color: colorScheme.pm1 },
         { label: 'PM2.5:', unit: 'μg/m³', data: alignedPm2_5, color: colorScheme.pm2_5 },
@@ -3989,7 +4107,7 @@ function updateExtendedCharts(data) {
 
     datasetsConfig.forEach((config, index) => {
         const hasData = config.data && config.data.some(v => v !== null && v !== undefined && v !== '');
-        charts.environmentalCombinedChart.data.datasets[index].data = config.data;
+        charts.environmentalCombinedChart.data.datasets[index].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: config.data[idx] }));
         if (charts.environmentalCombinedChart.data.datasets[index].hidden === undefined || charts.environmentalCombinedChart.data.datasets[index].hidden === null) {
             const hiddenByDefault = [0, 5, 6, 7, 8]; // PM1, Pressure, VOC, NO2, Noise
             charts.environmentalCombinedChart.data.datasets[index].hidden = !hasData || hiddenByDefault.includes(index);
