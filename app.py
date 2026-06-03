@@ -131,6 +131,23 @@ def user_lookup_callback(_jwt_header, jwt_data):
 logging.basicConfig(level=logging.INFO)
 logging = logging.getLogger(__name__)
 
+def make_naive_iso(val):
+    if val is None:
+        return None
+    if not val:
+        return ""
+    if hasattr(val, 'isoformat'):
+        if hasattr(val, 'replace'):
+            val = val.replace(tzinfo=None)
+        return val.isoformat()
+    if isinstance(val, str):
+        if '+' in val:
+            val = val.split('+')[0]
+        elif val.endswith('Z'):
+            val = val[:-1]
+        return val.replace(' ', 'T')
+    return str(val)
+
 # Database configuration
 USE_SQLITE = os.getenv('USE_SQLITE', 'true').lower() == 'true'
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -1623,10 +1640,7 @@ def emit_websocket_update(device_id):
             return sum(values) / len(values) if values else 0
 
         def safe_isoformat(ts):
-            if not ts: return ""
-            if isinstance(ts, datetime): return ts.isoformat()
-            if isinstance(ts, str): return ts.replace(' ', 'T')
-            return str(ts)
+            return make_naive_iso(ts)
 
 
 
@@ -1782,8 +1796,8 @@ def emit_extended_websocket_update(device_id):
         # Convert datetime objects to ISO strings for JSON serialization
         def serialize_extended_row(row):
             data = dict(row)
-            if isinstance(data.get("timestamp"), datetime):
-                data["timestamp"] = data["timestamp"].isoformat()
+            if "timestamp" in data:
+                data["timestamp"] = make_naive_iso(data["timestamp"])
             return data
 
         serialized_data = serialize_extended_row(latest_ext)
@@ -2475,10 +2489,14 @@ def get_data():
                 return None
 
         sensor = {}
+        def to_iso_str(ts):
+            return make_naive_iso(ts)
+
+        sensor = {}
         if latest:
             if USE_SQLITE:
                 sensor = {
-                    "timestamp": latest[0] if isinstance(latest[0], str) else latest[0].isoformat(),
+                    "timestamp": to_iso_str(latest[0]),
                     "pm1": to_float_or_none(latest[1]),
                     "pm2_5": to_float_or_none(latest[2]),
                     "pm4": to_float_or_none(latest[3]),
@@ -2492,7 +2510,7 @@ def get_data():
                 }
             else:
                 sensor = {
-                    "timestamp": latest["timestamp"].isoformat(),
+                    "timestamp": to_iso_str(latest["timestamp"]),
                     "pm1": to_float_or_none(latest["pm1"]),
                     "pm2_5": to_float_or_none(latest["pm2_5"]),
                     "pm4": to_float_or_none(latest["pm4"]),
@@ -2504,15 +2522,6 @@ def get_data():
                     "avg_pm10": to_float_or_none(avg_row["avg_pm10"]) if avg_row else None,
                     "avg_tsp": to_float_or_none(avg_row["avg_tsp"]) if avg_row else None
                 }
-
-        def to_iso_str(ts):
-            """Convert timestamp to ISO 8601 string with T separator for browser compatibility"""
-            if ts is None:
-                return None
-            if isinstance(ts, str):
-                # Replace space with T for ISO 8601 compatibility
-                return ts.replace(' ', 'T') if ' ' in ts else ts
-            return ts.isoformat()
 
         if USE_SQLITE:
             history = {
@@ -3077,7 +3086,7 @@ def get_device_locations():
                     "has_relay": r[3],
                     "gps_lat": lat,
                     "gps_lon": lon,
-                    "last_update": r[6].isoformat() if hasattr(r[6], 'isoformat') else (str(r[6]) if r[6] else None)
+                    "last_update": make_naive_iso(r[6])
                 })
             else:
                 devices.append({
@@ -3087,7 +3096,7 @@ def get_device_locations():
                     "has_relay": r["has_relay"],
                     "gps_lat": lat,
                     "gps_lon": lon,
-                    "last_update": r["timestamp"].isoformat() if r["timestamp"] else None
+                    "last_update": make_naive_iso(r["timestamp"])
                 })
         return jsonify({"devices": devices})
     except Exception as e:
