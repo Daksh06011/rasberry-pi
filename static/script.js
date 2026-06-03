@@ -2864,6 +2864,30 @@ function updateCharts(data) {
     // Update PM Time Chart
     if (charts.timeChart && sortedPmTimestamps.length) {
         charts.timeChart.data.labels = []; // Clear to prevent category timeline overlap
+        
+        let targetDate = new Date();
+        if (sortedPmTimestamps && sortedPmTimestamps.length > 0) {
+            targetDate = new Date(sortedPmTimestamps[sortedPmTimestamps.length - 1]);
+        }
+        const startOfDay = new Date(targetDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(targetDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        let isZoomed = false;
+        try {
+            if (typeof charts.timeChart.isZoomedOrPanned === 'function') {
+                isZoomed = charts.timeChart.isZoomedOrPanned();
+            }
+        } catch (e) {}
+
+        if (!isZoomed) {
+            if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
+            if (!charts.timeChart.options.scales.x) charts.timeChart.options.scales.x = {};
+            charts.timeChart.options.scales.x.min = startOfDay;
+            charts.timeChart.options.scales.x.max = endOfDay;
+        }
+
         charts.timeChart.data.datasets[0].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm1[idx] }));
         charts.timeChart.data.datasets[1].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm2_5[idx] }));
         charts.timeChart.data.datasets[2].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm4[idx] }));
@@ -2929,6 +2953,30 @@ function updateCharts(data) {
             (data.extended?.humidity_percent ? Array(sortedCombinedTimestamps.length).fill(Number(data.extended.humidity_percent)) : []);
 
         charts.unifiedChart.data.labels = []; // Clear labels
+        
+        let targetDate = new Date();
+        if (sortedCombinedTimestamps && sortedCombinedTimestamps.length > 0) {
+            targetDate = new Date(sortedCombinedTimestamps[sortedCombinedTimestamps.length - 1]);
+        }
+        const startOfDay = new Date(targetDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(targetDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        let isZoomed = false;
+        try {
+            if (typeof charts.unifiedChart.isZoomedOrPanned === 'function') {
+                isZoomed = charts.unifiedChart.isZoomedOrPanned();
+            }
+        } catch (e) {}
+
+        if (!isZoomed) {
+            if (!charts.unifiedChart.options.scales) charts.unifiedChart.options.scales = {};
+            if (!charts.unifiedChart.options.scales.x) charts.unifiedChart.options.scales.x = {};
+            charts.unifiedChart.options.scales.x.min = startOfDay;
+            charts.unifiedChart.options.scales.x.max = endOfDay;
+        }
+
         charts.unifiedChart.data.datasets[0].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm1[idx] }));
         charts.unifiedChart.data.datasets[1].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm2_5[idx] }));
         charts.unifiedChart.data.datasets[2].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm4[idx] }));
@@ -4090,6 +4138,30 @@ function updateExtendedCharts(data) {
          (extendedData.sound !== undefined ? Array(sortedCombinedTimestamps.length).fill(Number(extendedData.sound)) : []));
 
     charts.environmentalCombinedChart.data.labels = []; // Clear labels
+    
+    let targetDate = new Date();
+    if (sortedCombinedTimestamps && sortedCombinedTimestamps.length > 0) {
+        targetDate = new Date(sortedCombinedTimestamps[sortedCombinedTimestamps.length - 1]);
+    }
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    let isZoomed = false;
+    try {
+        if (typeof charts.environmentalCombinedChart.isZoomedOrPanned === 'function') {
+            isZoomed = charts.environmentalCombinedChart.isZoomedOrPanned();
+        }
+    } catch (e) {}
+
+    if (!isZoomed) {
+        if (!charts.environmentalCombinedChart.options.scales) charts.environmentalCombinedChart.options.scales = {};
+        if (!charts.environmentalCombinedChart.options.scales.x) charts.environmentalCombinedChart.options.scales.x = {};
+        charts.environmentalCombinedChart.options.scales.x.min = startOfDay;
+        charts.environmentalCombinedChart.options.scales.x.max = endOfDay;
+    }
+
     const datasetsConfig = [
         { label: 'PM1:', unit: 'μg/m³', data: alignedPm1, color: colorScheme.pm1 },
         { label: 'PM2.5:', unit: 'μg/m³', data: alignedPm2_5, color: colorScheme.pm2_5 },
