@@ -1003,6 +1003,25 @@ async function initializeDeviceSelectionMap() {
         });
 
         if (validLocations > 0) {
+            // Auto focus and open the info window for the currently selected device if available
+            if (currentDeviceId) {
+                const activeMarker = deviceSelectMarkers.find(m => String(m.deviceId) === String(currentDeviceId));
+                if (activeMarker) {
+                    deviceSelectMap.panTo(activeMarker.getPosition());
+                    if (activeMarker.infoWindow) {
+                        activeMarker.infoWindow.open(deviceSelectMap, activeMarker);
+                    }
+                    const lat = activeMarker.getPosition().lat();
+                    const lng = activeMarker.getPosition().lng();
+                    if ((Math.abs(lat - 70.0) < 1.0 && Math.abs(lng - 30.0) < 1.0) || (lat === 0.0 && lng === 0.0)) {
+                        deviceSelectMap.setZoom(4);
+                    } else {
+                        deviceSelectMap.setZoom(8);
+                    }
+                    return;
+                }
+            }
+
             deviceSelectMap.fitBounds(bounds);
             
             // Limit zoom level when bounds fit a single marker (prevent blank blue screen)
@@ -4084,6 +4103,26 @@ function initializeMapToggle() {
                         }
                     } else if (typeof google !== 'undefined' && google.maps) {
                         google.maps.event.trigger(deviceSelectMap, 'resize');
+                        
+                        // Focus on active device and open its info window directly
+                        if (currentDeviceId && deviceSelectMarkers.length > 0) {
+                            const activeMarker = deviceSelectMarkers.find(m => String(m.deviceId) === String(currentDeviceId));
+                            if (activeMarker) {
+                                deviceSelectMap.panTo(activeMarker.getPosition());
+                                if (activeMarker.infoWindow) {
+                                    activeMarker.infoWindow.open(deviceSelectMap, activeMarker);
+                                }
+                                const lat = activeMarker.getPosition().lat();
+                                const lng = activeMarker.getPosition().lng();
+                                if ((Math.abs(lat - 70.0) < 1.0 && Math.abs(lng - 30.0) < 1.0) || (lat === 0.0 && lng === 0.0)) {
+                                    deviceSelectMap.setZoom(4);
+                                } else {
+                                    deviceSelectMap.setZoom(8);
+                                }
+                                return;
+                            }
+                        }
+
                         if (deviceSelectMarkers.length > 0) {
                             const bounds = new google.maps.LatLngBounds();
                             deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
