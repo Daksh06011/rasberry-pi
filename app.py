@@ -322,7 +322,7 @@ if USE_SQLITE:
             logging.info("Seeded default data source into SQLite database")
 
         # Seed default device if it does not exist
-        cur.execute("SELECT id FROM dust_devices WHERE deviceid = 'xiao-cam-01' OR deviceid = 'SGN-V3-12'")
+        cur.execute("SELECT id FROM dust_devices WHERE id = 5")
         if not cur.fetchone():
             cur.execute("""
                 INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
@@ -334,9 +334,9 @@ if USE_SQLITE:
             cur.execute("""
                 UPDATE dust_devices 
                 SET deviceid = 'SGN-V3-12', name = 'SGN-V3-12' 
-                WHERE deviceid = 'xiao-cam-01'
+                WHERE deviceid = 'xiao-cam-01' AND id = 5
             """)
-            logging.info("Migrated existing default device from xiao-cam-01 to SGN-V3-12")
+            logging.info("Migrated existing default device from xiao-cam-01 to SGN-V3-12 if present")
         # Ensure historical telemetry data is seeded if empty in SQLite
         try:
             cur.execute("SELECT COUNT(id) FROM dust_sensor_data WHERE device_id = 5")
@@ -652,7 +652,7 @@ def initialize_database():
 
             # Ensure default device is seeded
             try:
-                cur.execute("SELECT id FROM dust_devices WHERE deviceid = 'xiao-cam-01' OR deviceid = 'SGN-V3-12'")
+                cur.execute("SELECT id FROM dust_devices WHERE id = 5")
                 if not cur.fetchone():
                     cur.execute("""
                         INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
@@ -663,7 +663,7 @@ def initialize_database():
                     cur.execute("""
                         UPDATE dust_devices 
                         SET deviceid = 'SGN-V3-12', name = 'SGN-V3-12' 
-                        WHERE deviceid = 'xiao-cam-01'
+                        WHERE deviceid = 'xiao-cam-01' AND id = 5
                     """)
                 conn.commit()
             except Exception as e:

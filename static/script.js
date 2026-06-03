@@ -10,6 +10,60 @@
 // fall back to localhost during development, otherwise use relative paths so Vercel can proxy `/api`.
 const API_BASE_URL = window.__BACKEND_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname ? 'http://127.0.0.1:5000' : 'https://reasonable-wonder-production-c57e.up.railway.app');
 
+function parseLocalTime(t) {
+    if (!t) return null;
+    if (t instanceof Date) return t;
+    try {
+        let s = typeof t === 'string' ? t.replace('T', ' ').replace('Z', '') : String(t);
+        if (s.includes('+')) {
+            s = s.split('+')[0];
+        }
+        const parts = s.split(' ');
+        const dateParts = parts[0].split('-');
+        if (dateParts.length !== 3) return new Date(t);
+        
+        const timeParts = parts[1] ? parts[1].split(':') : [0, 0, 0];
+        
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const day = parseInt(dateParts[2], 10);
+        
+        const hour = parseInt(timeParts[0], 10);
+        const minute = parseInt(timeParts[1], 10);
+        const second = parseFloat(timeParts[2] || 0);
+        
+        const d = new Date(year, month, day, hour, minute, Math.floor(second));
+        return isNaN(d.getTime()) ? null : d;
+    } catch (e) {
+        console.warn('Failed to parse local time, falling back:', t, e);
+        const d = new Date(t);
+        return isNaN(d.getTime()) ? null : d;
+    }
+}
+
+function setChartDayBounds(chart, targetDateObj) {
+    if (!chart) return;
+    const targetDate = targetDateObj ? new Date(targetDateObj) : new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    let isZoomed = false;
+    try {
+        if (typeof chart.isZoomedOrPanned === 'function') {
+            isZoomed = chart.isZoomedOrPanned();
+        }
+    } catch (e) {}
+    
+    if (!isZoomed) {
+        if (!chart.options.scales) chart.options.scales = {};
+        if (!chart.options.scales.x) chart.options.scales.x = {};
+        chart.options.scales.x.min = startOfDay;
+        chart.options.scales.x.max = endOfDay;
+    }
+}
+
 /**
  * Wrapper for fetch that automatically adds API_BASE_URL and Authorization headers
  */
@@ -2875,37 +2929,42 @@ function updateCharts(data) {
     const alignedHumid = sortedCombinedTimes.map(t => extMap.humid.has(t) ? Number(extMap.humid.get(t)) : null);
 
     // Update PM Time Chart
-    if (charts.timeChart && sortedPmTimestamps.length) {
+    if (charts.timeChart) {
         charts.timeChart.data.labels = []; // Clear to prevent category timeline overlap
         
         let targetDate = new Date();
         if (sortedPmTimestamps && sortedPmTimestamps.length > 0) {
             targetDate = new Date(sortedPmTimestamps[sortedPmTimestamps.length - 1]);
         }
-        const startOfDay = new Date(targetDate);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(targetDate);
-        endOfDay.setHours(23, 59, 59, 999);
+        setChartDayBounds(charts.timeChart, targetDate);
 
-        let isZoomed = false;
-        try {
-            if (typeof charts.timeChart.isZoomedOrPanned === 'function') {
-                isZoomed = charts.timeChart.isZoomedOrPanned();
+        if (sortedPmTimestamps.length > 0) {
+            charts.timeChart.data.datasets[0].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm1[idx] }));
+            charts.timeChart.data.datasets[1].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm2_5[idx] }));
+            charts.timeChart.data.datasets[2].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm4[idx] }));
+            charts.timeChart.data.datasets[3].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm10[idx] }));
+            charts.timeChart.data.datasets[4].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedTsp[idx] }));
+
+            // Compute moving average
+            try {
+                const pm = (sortedPm2_5 || []).map(Number);
+                const n = pm.length;
+                const windowSize = n > 24 ? 12 : (n > 8 ? 6 : 3);
+                const ma = new Array(n).fill(null);
+                for (let i = 0; i < n; i++) {
+                    const start = Math.max(0, i - windowSize + 1);
+                    const slice = pm.slice(start, i + 1).filter(v => !isNaN(v));
+                    if (slice.length) ma[i] = slice.reduce((a, b) => a + b, 0) / slice.length;
+                }
+                if (charts.timeChart.data.datasets[5]) {
+                    charts.timeChart.data.datasets[5].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: ma[idx] }));
+                }
+            } catch (e) {
+                console.warn('Failed to compute moving average:', e);
             }
-        } catch (e) {}
-
-        if (!isZoomed) {
-            if (!charts.timeChart.options.scales) charts.timeChart.options.scales = {};
-            if (!charts.timeChart.options.scales.x) charts.timeChart.options.scales.x = {};
-            charts.timeChart.options.scales.x.min = startOfDay;
-            charts.timeChart.options.scales.x.max = endOfDay;
+        } else {
+            charts.timeChart.data.datasets.forEach(ds => ds.data = []);
         }
-
-        charts.timeChart.data.datasets[0].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm1[idx] }));
-        charts.timeChart.data.datasets[1].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm2_5[idx] }));
-        charts.timeChart.data.datasets[2].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm4[idx] }));
-        charts.timeChart.data.datasets[3].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedPm10[idx] }));
-        charts.timeChart.data.datasets[4].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: sortedTsp[idx] }));
 
         // Handle suggestedMax and rigid axes logic safely
         try {
@@ -2937,29 +2996,11 @@ function updateCharts(data) {
             console.warn('Failed to compute suggestedMax/rigidMax for chart:', e);
         }
 
-        // Compute moving average
-        try {
-            const pm = (sortedPm2_5 || []).map(Number);
-            const n = pm.length;
-            const windowSize = n > 24 ? 12 : (n > 8 ? 6 : 3);
-            const ma = new Array(n).fill(null);
-            for (let i = 0; i < n; i++) {
-                const start = Math.max(0, i - windowSize + 1);
-                const slice = pm.slice(start, i + 1).filter(v => !isNaN(v));
-                if (slice.length) ma[i] = slice.reduce((a, b) => a + b, 0) / slice.length;
-            }
-            if (charts.timeChart.data.datasets[5]) {
-                charts.timeChart.data.datasets[5].data = sortedPmTimestamps.map((t, idx) => ({ x: t, y: ma[idx] }));
-            }
-        } catch (e) {
-            console.warn('Failed to compute moving average:', e);
-        }
-
         safeChartUpdate(charts.timeChart, 'timeChart');
     }
 
     // Update Unified Chart
-    if (charts.unifiedChart && sortedCombinedTimestamps.length) {
+    if (charts.unifiedChart) {
         const finalTempData = alignedTemp.some(v => v !== null) ? alignedTemp : 
             (data.extended?.temperature_c ? Array(sortedCombinedTimestamps.length).fill(Number(data.extended.temperature_c)) : []);
         const finalHumidityData = alignedHumid.some(v => v !== null) ? alignedHumid : 
@@ -2971,31 +3012,18 @@ function updateCharts(data) {
         if (sortedCombinedTimestamps && sortedCombinedTimestamps.length > 0) {
             targetDate = new Date(sortedCombinedTimestamps[sortedCombinedTimestamps.length - 1]);
         }
-        const startOfDay = new Date(targetDate);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(targetDate);
-        endOfDay.setHours(23, 59, 59, 999);
+        setChartDayBounds(charts.unifiedChart, targetDate);
 
-        let isZoomed = false;
-        try {
-            if (typeof charts.unifiedChart.isZoomedOrPanned === 'function') {
-                isZoomed = charts.unifiedChart.isZoomedOrPanned();
-            }
-        } catch (e) {}
-
-        if (!isZoomed) {
-            if (!charts.unifiedChart.options.scales) charts.unifiedChart.options.scales = {};
-            if (!charts.unifiedChart.options.scales.x) charts.unifiedChart.options.scales.x = {};
-            charts.unifiedChart.options.scales.x.min = startOfDay;
-            charts.unifiedChart.options.scales.x.max = endOfDay;
+        if (sortedCombinedTimestamps.length > 0) {
+            charts.unifiedChart.data.datasets[0].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm1[idx] }));
+            charts.unifiedChart.data.datasets[1].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm2_5[idx] }));
+            charts.unifiedChart.data.datasets[2].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm4[idx] }));
+            charts.unifiedChart.data.datasets[3].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm10[idx] }));
+            charts.unifiedChart.data.datasets[4].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: finalTempData[idx] }));
+            charts.unifiedChart.data.datasets[5].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: finalHumidityData[idx] }));
+        } else {
+            charts.unifiedChart.data.datasets.forEach(ds => ds.data = []);
         }
-
-        charts.unifiedChart.data.datasets[0].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm1[idx] }));
-        charts.unifiedChart.data.datasets[1].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm2_5[idx] }));
-        charts.unifiedChart.data.datasets[2].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm4[idx] }));
-        charts.unifiedChart.data.datasets[3].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: alignedPm10[idx] }));
-        charts.unifiedChart.data.datasets[4].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: finalTempData[idx] }));
-        charts.unifiedChart.data.datasets[5].data = sortedCombinedTimestamps.map((t, idx) => ({ x: t, y: finalHumidityData[idx] }));
 
         safeChartUpdate(charts.unifiedChart, 'unifiedChart');
         updateUnifiedChartStatistics(data);
@@ -3038,7 +3066,7 @@ function debugDataFlow(data, stage) {
 function updateDeepAnalyticsCharts(data) {
     if (!data.history || !data.history.timestamps) return;
     
-    const timestamps = data.history.timestamps.map(t => new Date(t));
+    const timestamps = data.history.timestamps.map(t => parseLocalTime(t));
     
     // Parameter Trend Chart (default to PM2.5)
     if (charts.paramTrendChart) {
@@ -3046,8 +3074,19 @@ function updateDeepAnalyticsCharts(data) {
         const paramData = data.history[selectedParam] || data.history.pm2_5 || [];
         
         charts.paramTrendChart.data.labels = [];
-        charts.paramTrendChart.data.datasets[0].data = timestamps.map((t, idx) => ({ x: t, y: paramData[idx] }));
-        charts.paramTrendChart.data.datasets.label = getParameterLabel(selectedParam);
+        
+        let targetDate = new Date();
+        if (timestamps && timestamps.length > 0) {
+            targetDate = new Date(timestamps[timestamps.length - 1]);
+        }
+        setChartDayBounds(charts.paramTrendChart, targetDate);
+
+        if (timestamps.length > 0) {
+            charts.paramTrendChart.data.datasets[0].data = timestamps.map((t, idx) => ({ x: t, y: paramData[idx] }));
+        } else {
+            charts.paramTrendChart.data.datasets[0].data = [];
+        }
+        charts.paramTrendChart.data.datasets[0].label = getParameterLabel(selectedParam);
         
         safeChartUpdate(charts.paramTrendChart, 'paramTrendChart');
     }
@@ -3133,12 +3172,23 @@ function updateParameterTrendChart(parameter) {
         .then(response => response.json())
         .then(data => {
             if (charts.paramTrendChart && data.history) {
-                const timestamps = data.history.timestamps.map(t => new Date(t));
+                const timestamps = data.history.timestamps.map(t => parseLocalTime(t));
                 const paramData = data.history[parameter] || [];
                 
                 charts.paramTrendChart.data.labels = [];
-                charts.paramTrendChart.data.datasets[0].data = timestamps.map((t, idx) => ({ x: t, y: paramData[idx] }));
-                charts.paramTrendChart.data.datasets.label = getParameterLabel(parameter);
+                
+                let targetDate = new Date();
+                if (timestamps && timestamps.length > 0) {
+                    targetDate = new Date(timestamps[timestamps.length - 1]);
+                }
+                setChartDayBounds(charts.paramTrendChart, targetDate);
+
+                if (timestamps.length > 0) {
+                    charts.paramTrendChart.data.datasets[0].data = timestamps.map((t, idx) => ({ x: t, y: paramData[idx] }));
+                } else {
+                    charts.paramTrendChart.data.datasets[0].data = [];
+                }
+                charts.paramTrendChart.data.datasets[0].label = getParameterLabel(parameter);
                 
                 safeChartUpdate(charts.paramTrendChart, 'paramTrendChart');
             }
@@ -4011,7 +4061,7 @@ function calculateAQI(pm25) {
     return Math.round(((iHigh - iLow) / (cHigh - cLow)) * (c - cLow) + iLow);
 }
 
-function getAQIColor(aqi) {
+function getAQIHexColor(aqi) {
     if (aqi <= 50) return '#00e400';
     if (aqi <= 100) return '#ffff00';
     if (aqi <= 150) return '#ff7e00';
@@ -4033,12 +4083,9 @@ function updateExtendedCharts(data) {
     const extHistory = data.history && data.history.extended ? data.history.extended : {};
     const extTimestamps = extHistory.timestamps || [];
     
-    // Normalize and parse timestamps safely
+    // Normalize and parse timestamps safely using parseLocalTime
     const parseTime = (t) => {
-        if (!t) return null;
-        const s = typeof t === 'string' ? t.replace(' ', 'T') : t;
-        const d = new Date(s);
-        return isNaN(d.getTime()) ? null : d;
+        return parseLocalTime(t);
     };
 
     // 1. Sort standard PM data chronologically
@@ -4094,10 +4141,6 @@ function updateExtendedCharts(data) {
     
     const sortedCombinedTimes = Array.from(combinedUniqueTimes).sort((a, b) => a - b);
     const sortedCombinedTimestamps = sortedCombinedTimes.map(t => new Date(t));
-
-    if (!sortedCombinedTimestamps.length) {
-        return;
-    }
     
     // Create maps for alignment
     const pmMap = { pm1: new Map(), pm2_5: new Map(), pm10: new Map() };
@@ -4156,24 +4199,7 @@ function updateExtendedCharts(data) {
     if (sortedCombinedTimestamps && sortedCombinedTimestamps.length > 0) {
         targetDate = new Date(sortedCombinedTimestamps[sortedCombinedTimestamps.length - 1]);
     }
-    const startOfDay = new Date(targetDate);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(targetDate);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    let isZoomed = false;
-    try {
-        if (typeof charts.environmentalCombinedChart.isZoomedOrPanned === 'function') {
-            isZoomed = charts.environmentalCombinedChart.isZoomedOrPanned();
-        }
-    } catch (e) {}
-
-    if (!isZoomed) {
-        if (!charts.environmentalCombinedChart.options.scales) charts.environmentalCombinedChart.options.scales = {};
-        if (!charts.environmentalCombinedChart.options.scales.x) charts.environmentalCombinedChart.options.scales.x = {};
-        charts.environmentalCombinedChart.options.scales.x.min = startOfDay;
-        charts.environmentalCombinedChart.options.scales.x.max = endOfDay;
-    }
+    setChartDayBounds(charts.environmentalCombinedChart, targetDate);
 
     const datasetsConfig = [
         { label: 'PM1:', unit: 'μg/m³', data: alignedPm1, color: colorScheme.pm1 },
@@ -4225,7 +4251,7 @@ function updateExtendedCharts(data) {
         if (lastPm25Val !== undefined) {
             const aqi = calculateAQI(lastPm25Val);
             if (aqi !== null) {
-                const aqiColor = getAQIColor(aqi);
+                const aqiColor = getAQIHexColor(aqi);
                 const col = document.createElement('div');
                 col.className = 'col';
                 col.innerHTML = `
