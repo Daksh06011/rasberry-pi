@@ -196,6 +196,28 @@ if USE_SQLITE:
             pm10 REAL,
             tsp REAL
         )''')
+
+        cur.execute('''CREATE TABLE IF NOT EXISTS dust_thresholds (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id INTEGER REFERENCES dust_devices(id) ON DELETE CASCADE,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            pm1 REAL DEFAULT 50.0,
+            pm2_5 REAL DEFAULT 75.0,
+            pm4 REAL DEFAULT 100.0,
+            pm10 REAL DEFAULT 150.0,
+            tsp REAL DEFAULT 200.0,
+            averaging_window INTEGER DEFAULT 15
+        )''')
+
+        cur.execute('''CREATE TABLE IF NOT EXISTS dust_device_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id INTEGER REFERENCES dust_devices(id) ON DELETE CASCADE,
+            alert_type TEXT NOT NULL,
+            message TEXT NOT NULL,
+            threshold_value REAL,
+            measured_value REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
         
         # Seed default admin user if it does not exist
         cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
