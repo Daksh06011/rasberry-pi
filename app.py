@@ -1689,13 +1689,17 @@ def emit_websocket_update(device_id):
         # Get extended data if available
         extended_data = None
         try:
-            cur.execute("""
+            order_col = "rowid" if USE_SQLITE else "id"
+            query = f"""
                 SELECT *
                 FROM dust_extended_data
                 WHERE device_id = %s
-                ORDER BY timestamp DESC
+                ORDER BY {order_col} DESC
                 LIMIT 1
-            """, (device_id,))
+            """
+            if USE_SQLITE:
+                query = query.replace('%s', '?')
+            cur.execute(query, (device_id,))
             extended_row = cur.fetchone()
             if extended_row:
                 extended_data = dict(extended_row)
@@ -1773,13 +1777,17 @@ def emit_extended_websocket_update(device_id):
         conn = get_db_connection()
         cur = get_db_cursor(conn)
 
-        cur.execute("""
+        order_col = "rowid" if USE_SQLITE else "id"
+        query = f"""
             SELECT *
             FROM dust_extended_data
             WHERE device_id = %s
-            ORDER BY timestamp DESC
+            ORDER BY {order_col} DESC
             LIMIT 1
-        """, (device_id,))
+        """
+        if USE_SQLITE:
+            query = query.replace('%s', '?')
+        cur.execute(query, (device_id,))
         latest_ext = cur.fetchone()
 
         if not latest_ext:
@@ -2554,7 +2562,7 @@ def get_data():
                     SELECT *
                     FROM dust_extended_data
                     WHERE device_id = %s
-                    ORDER BY timestamp DESC
+                    ORDER BY rowid DESC
                     LIMIT 1
                 """, (int(device_id),))
                 row = cur.fetchone()
@@ -2587,7 +2595,7 @@ def get_data():
                     SELECT *
                     FROM dust_extended_data
                     WHERE device_id = %s
-                    ORDER BY timestamp DESC
+                    ORDER BY id DESC
                     LIMIT 1
                 """, (int(device_id),))
                 extended_row = cur.fetchone()
@@ -3026,7 +3034,7 @@ def get_device_locations():
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.timestamp DESC
+                    ORDER BY d.id, ed.rowid DESC
                 """)
             else:
                 cur.execute("""
@@ -3036,7 +3044,7 @@ def get_device_locations():
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE d.user_id = %s AND ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.timestamp DESC
+                    ORDER BY d.id, ed.rowid DESC
                 """, (current_user.id,))
         else:
             if current_user.is_admin:
@@ -3047,7 +3055,7 @@ def get_device_locations():
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.timestamp DESC
+                    ORDER BY d.id, ed.id DESC
                 """)
             else:
                 cur.execute("""
@@ -3057,7 +3065,7 @@ def get_device_locations():
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE d.user_id = %s AND ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.timestamp DESC
+                    ORDER BY d.id, ed.id DESC
                 """, (current_user.id,))
         rows = cur.fetchall()
         devices = []
