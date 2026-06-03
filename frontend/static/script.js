@@ -518,6 +518,7 @@ let rigidAxesEnabled = true;
 // Device selection map
 let deviceSelectMap = null;
 let deviceSelectMarkers = [];
+let latestData = null;
 // Polling fallback when websockets are not available or disconnected
 let pollingIntervalId = null;
 // Rigid maxima cache per chart
@@ -804,8 +805,19 @@ function handleDeviceSelection() {
     console.log('Fetching initial data...');
     fetchData(24);
 
-    // Initialize map if extended device - Map is now in location tab
-    // Map initialization is handled in the location tab when it's shown
+    // Pan Google Map to the selected device's location
+    if (deviceSelectMap && deviceSelectMarkers.length > 0) {
+        const marker = deviceSelectMarkers.find(m => String(m.deviceId) === String(currentDeviceId));
+        if (marker) {
+            deviceSelectMap.panTo(marker.getPosition());
+            if (deviceSelectMap.getZoom() < 8) {
+                deviceSelectMap.setZoom(8);
+            }
+            if (marker.infoWindow) {
+                marker.infoWindow.open(deviceSelectMap, marker);
+            }
+        }
+    }
 
     // Update device type indicator
     const indicator = document.getElementById('deviceTypeIndicator');
@@ -907,10 +919,27 @@ async function initializeDeviceSelectionMap() {
                 map: deviceSelectMap,
                 title: d.name || d.deviceid
             });
+            
+            marker.deviceId = String(d.id);
+            marker.deviceIdentifier = String(d.deviceid);
 
             const infowindow = new google.maps.InfoWindow({
-                content: `<div class="p-2"><strong>${d.name || d.deviceid}</strong></div>`
+                content: `
+                    <div class="p-3 font-sans text-dark" style="max-width: 250px;">
+                        <h6 class="mb-1 text-primary fw-bold">${d.name || d.deviceid}</h6>
+                        <div class="small text-muted mb-2">Device ID: ${d.deviceid}</div>
+                        <div class="d-flex align-items-center mb-1">
+                            <i class="bi bi-geo-alt-fill text-danger me-2"></i>
+                            <span class="small">Lat: ${d.gps_lat.toFixed(5)}, Lon: ${d.gps_lon.toFixed(5)}</span>
+                        </div>
+                        <div class="small text-secondary mt-2">
+                            Last active: ${d.last_update ? new Date(d.last_update).toLocaleString() : 'Never'}
+                        </div>
+                    </div>
+                `
             });
+            
+            marker.infoWindow = infowindow;
 
             marker.addListener('click', () => {
                 infowindow.open(deviceSelectMap, marker);
@@ -924,6 +953,15 @@ async function initializeDeviceSelectionMap() {
 
         if (validLocations > 0) {
             deviceSelectMap.fitBounds(bounds);
+            
+            // Limit zoom level when bounds fit a single marker (prevent blank blue screen)
+            if (validLocations === 1) {
+                google.maps.event.addListenerOnce(deviceSelectMap, 'idle', () => {
+                    if (deviceSelectMap.getZoom() > 8) {
+                        deviceSelectMap.setZoom(8);
+                    }
+                });
+            }
         }
     }
 
@@ -960,6 +998,82 @@ async function initializeDeviceSelectionMap() {
     });
 
     await refreshMarkers();
+}
+
+function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
+    if (!deviceSelectMap) return;
+    
+    const parsedLat = parseFloat(lat);
+    const parsedLon = parseFloat(lon);
+    if (isNaN(parsedLat) || isNaN(parsedLon) || (parsedLat === 0 && parsedLon === 0)) return;
+    
+    const latLng = { lat: parsedLat, lng: parsedLon };
+    
+    // Find if marker already exists
+    let marker = deviceSelectMarkers.find(m => String(m.deviceId) === String(deviceId));
+    
+    if (marker) {
+        marker.setPosition(latLng);
+        if (marker.infoWindow) {
+            marker.infoWindow.setContent(`
+                <div class="p-3 font-sans text-dark" style="max-width: 250px;">
+                    <h6 class="mb-1 text-primary fw-bold">${deviceName || marker.title}</h6>
+                    <div class="small text-muted mb-2">Device ID: ${marker.deviceIdentifier || deviceId}</div>
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-geo-alt-fill text-danger me-2"></i>
+                        <span class="small">Lat: ${latLng.lat.toFixed(5)}, Lon: ${latLng.lng.toFixed(5)}</span>
+                    </div>
+                    <div class="small text-secondary mt-2">
+                        Last active: ${new Date().toLocaleString()}
+                    </div>
+                </div>
+            `);
+        }
+    } else {
+        // Create new marker
+        marker = new google.maps.Marker({
+            position: latLng,
+            map: deviceSelectMap,
+            title: deviceName || `Device ${deviceId}`
+        });
+        marker.deviceId = String(deviceId);
+        
+        const infowindow = new google.maps.InfoWindow({
+            content: `
+                <div class="p-3 font-sans text-dark" style="max-width: 250px;">
+                    <h6 class="mb-1 text-primary fw-bold">${deviceName || `Device ${deviceId}`}</h6>
+                    <div class="small text-muted mb-2">Device ID: ${deviceId}</div>
+                    <div class="d-flex align-items-center mb-1">
+                        <i class="bi bi-geo-alt-fill text-danger me-2"></i>
+                        <span class="small">Lat: ${latLng.lat.toFixed(5)}, Lon: ${latLng.lng.toFixed(5)}</span>
+                    </div>
+                    <div class="small text-secondary mt-2">
+                        Last active: ${new Date().toLocaleString()}
+                    </div>
+                </div>
+            `
+        });
+        
+        marker.infoWindow = infowindow;
+
+        marker.addListener('click', () => {
+            infowindow.open(deviceSelectMap, marker);
+            selectDeviceById(deviceId);
+        });
+        
+        deviceSelectMarkers.push(marker);
+    }
+    
+    // If the updated device is the currently selected device, pan/center map to it
+    if (String(deviceId) === String(currentDeviceId)) {
+        deviceSelectMap.panTo(latLng);
+        // Ensure zoom is reasonable (between 5 and 8 is good for context)
+        if (deviceSelectMap.getZoom() > 8) {
+            // Keep zoom reasonable
+        } else {
+            deviceSelectMap.setZoom(8);
+        }
+    }
 }
 
 function updateDeviceInfoPanel(name, deviceId, type, hasRelay) {
@@ -1074,6 +1188,7 @@ function safeProcessIncomingData(data) {
         }
 
         // Call all update functions
+        latestData = normalizedData;
         updateDashboard(normalizedData);
         updateCharts(normalizedData);
         updateExtendedCharts(normalizedData);
@@ -2938,27 +3053,18 @@ function updateExtendedData(extendedData) {
         console.log('✅ Environmental tab is visible and active');
     }
 
-    // Update individual readings - use the correct element IDs from HTML
-    console.log('🔄 Updating environmental cards...');
-
-    // Check if elements exist before updating
-    const tempElement = document.getElementById('currentTemp');
-    console.log('Temperature element exists:', !!tempElement, 'Current text:', tempElement?.textContent);
-
-    updateEnvironmentalCard('currentTemp', extendedData.temperature_c, '°C');
-    updateEnvironmentalCard('currentHumidity', extendedData.humidity_percent, '%');
-    updateEnvironmentalCard('currentPressure', extendedData.pressure_hpa, ' hPa');
-    updateEnvironmentalCard('currentVOC', extendedData.voc_ppb, ' ppb');
-    updateEnvironmentalCard('currentNO2', extendedData.no2_ppb, '');
-    updateEnvironmentalCard('currentNoise', extendedData.noise_db, '');
-    updateEnvironmentalCard('currentCloudCover', extendedData.cloud_cover_percent, '%');
-    updateEnvironmentalCard('currentLux', extendedData.lux, ' lux');
-    updateEnvironmentalCard('currentUV', extendedData.uv_index, '');
-
-    console.log('✅ Extended data update completed');
+    // Re-create/re-render environmental cards dynamically
+    console.log('🔄 Re-creating environmental cards dynamically...');
+    createEnvironmentalDataCards(extendedData, {});
 
     // Update environmental summary in the overview tab
     updateEnvironmentalSummary(extendedData);
+
+    // Update Google Maps coordinates if coordinates are available
+    if (extendedData.gps_lat !== undefined && extendedData.gps_lon !== undefined && extendedData.gps_lat !== null && extendedData.gps_lon !== null) {
+        console.log('📍 Updating GPS location on Google Map:', extendedData.gps_lat, extendedData.gps_lon);
+        updateGoogleMapLocation(currentDeviceId, extendedData.gps_lat, extendedData.gps_lon);
+    }
 }
 
 function updateEnvironmentalCard(elementId, value, unit) {
@@ -3450,19 +3556,7 @@ function updateAQIFromBackend(aqiData) {
     }
 }
 
-// ========================
-// MAP FUNCTIONALITY (New)
-// ========================
 
-function initializeMap() {
-    if (map) return;
-    
-    map = L.map('map').setView([0, 0], 2);
-    
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        attribution: '© OpenStreetMap contributors © CARTO'
-    }).addTo(map);
-}
 
 
 // ========================
@@ -3525,35 +3619,7 @@ function calculateThresholdFrequency(data) {
     }
 }
 
-function updateExtendedData(extendedData) {
-    if (!extendedData) return;
-    
-    // Update extended data displays
-    const mappings = {
-        'extTemp': extendedData.temperature_c,
-        'extHumidity': extendedData.humidity_percent,
-        'extPressure': extendedData.pressure_hpa,
-        'extVOC': extendedData.voc_ppb,
-        'extNO2': extendedData.no2_ppb,
-        'extCloudCover': extendedData.cloud_cover_percent
-    };
-    
-    Object.entries(mappings).forEach(([id, value]) => {
-        const element = document.getElementById(id);
-        if (element && value !== null && value !== undefined) {
-            element.textContent = typeof value === 'number' ? 
-                value.toFixed(1) : value;
-        }
-    });
-    
-    // Update GPS location if available
-    if (extendedData.gps_lat && extendedData.gps_lon && deviceMarker) {
-        deviceMarker.setLatLng([extendedData.gps_lat, extendedData.gps_lon]);
-        if (map) {
-            map.setView([extendedData.gps_lat, extendedData.gps_lon], map.getZoom());
-        }
-    }
-}
+
 
 function updateDeepAnalyticsCharts(data) {
     // Placeholder for deep analytics updates
@@ -4595,6 +4661,10 @@ function normalizeIncomingData(data) {
             battery_percent: data.extended.battery_percent,
             pm2_5: data.extended.pm2_5,
             noise_db: data.extended.noise_db !== undefined ? data.extended.noise_db : data.extended.sound,
+            gps_lat: data.extended.gps_lat,
+            gps_lon: data.extended.gps_lon,
+            gps_alt_m: data.extended.gps_alt_m,
+            gps_speed_kmh: data.extended.gps_speed_kmh,
             timestamp: data.extended.timestamp
         };
         console.log('Normalized extended data:', normalized.extended);
