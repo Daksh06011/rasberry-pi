@@ -1620,7 +1620,7 @@ def emit_websocket_update(device_id):
                 SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
                 FROM dust_sensor_data
                 WHERE device_id = %s
-                AND timestamp >= %s
+                AND datetime(timestamp) >= datetime(%s)
                 ORDER BY timestamp ASC
             """, (device_id, cutoff_time.isoformat()))
         else:
@@ -2370,7 +2370,7 @@ def get_data():
                        AVG(pm10) as avg_pm10,
                        AVG(tsp) as avg_tsp
                 FROM dust_sensor_data
-                WHERE device_id = %s AND timestamp >= %s
+                WHERE device_id = %s AND datetime(timestamp) >= datetime(%s)
             """, (device_id, cutoff_time.isoformat()))
         else:
             cur.execute("""
@@ -2390,7 +2390,7 @@ def get_data():
             cur.execute("""
                 SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
                 FROM dust_sensor_data
-                WHERE device_id = %s AND timestamp >= %s
+                WHERE device_id = %s AND datetime(timestamp) >= datetime(%s)
                 ORDER BY timestamp ASC
             """, (device_id, cutoff_time.isoformat()))
         else:
@@ -2573,7 +2573,7 @@ def get_data():
                            voc_ppb, no2_ppb, noise_db, gps_speed_kmh, cloud_cover_percent,
                            lux, uv_index, battery_percent
                     FROM dust_extended_data
-                    WHERE device_id = %s AND timestamp >= %s
+                    WHERE device_id = %s AND datetime(timestamp) >= datetime(%s)
                     ORDER BY timestamp ASC
                 """, (int(device_id), cutoff_time.isoformat()))
                 ext_rows = cur.fetchall()
