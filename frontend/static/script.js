@@ -872,11 +872,12 @@ async function initializeDeviceSelectionMap() {
     if (!mapContainer) return;
 
     if (!deviceSelectMap) {
-        deviceSelectMap = L.map(mapContainer).setView([20.5937, 78.9629], 4);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap contributors'
-        }).addTo(deviceSelectMap);
+        deviceSelectMap = new google.maps.Map(mapContainer, {
+            center: { lat: 20.5937, lng: 78.9629 },
+            zoom: 4,
+            mapTypeControl: true,
+            streetViewControl: false
+        });
     }
 
     async function fetchLocations() {
@@ -887,32 +888,42 @@ async function initializeDeviceSelectionMap() {
 
     function clearMarkers() {
         if (deviceSelectMarkers) {
-            deviceSelectMarkers.forEach(m => deviceSelectMap.removeLayer(m));
+            deviceSelectMarkers.forEach(m => m.setMap(null));
         }
         deviceSelectMarkers = [];
     }
 
     function addMarkers(devices) {
         clearMarkers();
-        const latLngs = [];
+        const bounds = new google.maps.LatLngBounds();
+        let validLocations = 0;
 
         devices.forEach(d => {
             if (!Number.isFinite(d.gps_lat) || !Number.isFinite(d.gps_lon)) return;
-            const latLng = [d.gps_lat, d.gps_lon];
+            const latLng = { lat: d.gps_lat, lng: d.gps_lon };
             
-            const marker = L.marker(latLng).addTo(deviceSelectMap);
-            marker.bindPopup(`<div class="p-2"><strong>${d.name || d.deviceid}</strong></div>`);
+            const marker = new google.maps.Marker({
+                position: latLng,
+                map: deviceSelectMap,
+                title: d.name || d.deviceid
+            });
 
-            marker.on('click', () => {
+            const infowindow = new google.maps.InfoWindow({
+                content: `<div class="p-2"><strong>${d.name || d.deviceid}</strong></div>`
+            });
+
+            marker.addListener('click', () => {
+                infowindow.open(deviceSelectMap, marker);
                 selectDeviceById(d.id);
             });
 
             deviceSelectMarkers.push(marker);
-            latLngs.push(latLng);
+            bounds.extend(latLng);
+            validLocations++;
         });
 
-        if (latLngs.length > 0) {
-            deviceSelectMap.fitBounds(latLngs);
+        if (validLocations > 0) {
+            deviceSelectMap.fitBounds(bounds);
         }
     }
 
@@ -943,10 +954,9 @@ async function initializeDeviceSelectionMap() {
     const fitBtn = document.getElementById('fitDeviceMapBtn');
     if (refreshBtn) refreshBtn.addEventListener('click', refreshMarkers);
     if (fitBtn) fitBtn.addEventListener('click', () => {
-        if (deviceSelectMarkers.length) {
-            const latLngs = deviceSelectMarkers.map(m => m.getLatLng());
-            deviceSelectMap.fitBounds(latLngs);
-        }
+        const bounds = new google.maps.LatLngBounds();
+        deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
+        if (deviceSelectMarkers.length) deviceSelectMap.fitBounds(bounds);
     });
 
     await refreshMarkers();
