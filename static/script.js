@@ -4842,7 +4842,7 @@ function normalizeIncomingData(data) {
 
 
 
-function exportData() {
+async function exportData() {
     if (!currentDeviceId) {
         createAlert('Please select a device first', 'warning');
         return;
@@ -4856,9 +4856,60 @@ function exportData() {
         return;
     }
     
-    const url = `${API_BASE_URL}/api/export_json?deviceid=${currentDeviceId}&start_date=${startDate}&end_date=${endDate}`;
-    window.open(url, '_blank');
-    createAlert('JSON Export started - check your downloads', 'success');
+    createAlert('Exporting CSV data, please wait...', 'info');
+    
+    try {
+        const url = `/api/export_csv?deviceid=${currentDeviceId}&start_date=${startDate}&end_date=${endDate}`;
+        const response = await apiFetch(url);
+        
+        if (!response) {
+            // apiFetch handles 401 redirect
+            return;
+        }
+        
+        if (!response.ok) {
+            let errorMessage = 'Failed to export data';
+            try {
+                const text = await response.text();
+                const match = text.match(/<p>(.*?)<\/p>/);
+                if (match && match[1]) {
+                    errorMessage = match[1].replace(/Error:\s*/, '');
+                } else {
+                    errorMessage = `Server returned status ${response.status}`;
+                }
+            } catch (e) {
+                errorMessage = `Server returned status ${response.status}`;
+            }
+            createAlert(errorMessage, 'danger');
+            return;
+        }
+        
+        // Get filename from Content-Disposition header if available
+        let filename = `dust_data_${currentDeviceId}_${startDate}_to_${endDate}.csv`;
+        const disposition = response.headers.get('Content-Disposition');
+        if (disposition && disposition.indexOf('attachment') !== -1) {
+            const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+            const matches = filenameRegex.exec(disposition);
+            if (matches != null && matches[1]) { 
+                filename = matches[1].replace(/['"]/g, '');
+            }
+        }
+        
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(downloadUrl);
+        
+        createAlert('CSV Export completed successfully', 'success');
+    } catch (error) {
+        console.error('Export error:', error);
+        createAlert('An error occurred during export', 'danger');
+    }
 }
 
 function setDefaultDates() {
