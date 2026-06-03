@@ -892,15 +892,21 @@ function joinDeviceRoom(deviceId) {
 }
 
 function getGeocodedAddress(lat, lon, callback) {
-    const latLng = { lat: parseFloat(lat), lng: parseFloat(lon) };
-    if (isNaN(latLng.lat) || isNaN(latLng.lng)) {
+    let parsedLat = parseFloat(lat);
+    let parsedLon = parseFloat(lon);
+    if (isNaN(parsedLat) || isNaN(parsedLon)) {
         callback("Unknown Location");
         return;
     }
-    if (Math.abs(latLng.lat - 70.0) < 1.0 && Math.abs(latLng.lng - 30.0) < 1.0) {
-        callback("Barents Sea (Arctic Ocean)");
-        return;
+    // Check if coordinates are dummy and map them to Chandigarh
+    if (Math.abs(parsedLat - 70.0) < 0.1 && Math.abs(parsedLon - 30.0) < 0.1) {
+        parsedLat = 30.7333;
+        parsedLon = 76.7794;
+    } else if (Math.abs(parsedLat - 30.0) < 0.1 && Math.abs(parsedLon - 70.0) < 0.1) {
+        parsedLat = 30.7433;
+        parsedLon = 76.7894;
     }
+    const latLng = { lat: parsedLat, lng: parsedLon };
     if (typeof google !== 'undefined' && google.maps && google.maps.Geocoder) {
         const geocoder = new google.maps.Geocoder();
         geocoder.geocode({ location: latLng }, (results, status) => {
@@ -951,7 +957,19 @@ async function initializeDeviceSelectionMap() {
 
         devices.forEach(d => {
             if (!Number.isFinite(d.gps_lat) || !Number.isFinite(d.gps_lon)) return;
-            const latLng = { lat: d.gps_lat, lng: d.gps_lon };
+            
+            let lat = d.gps_lat;
+            let lon = d.gps_lon;
+            // Apply coordinates override for dummy coordinates
+            if (Math.abs(lat - 70.0) < 0.1 && Math.abs(lon - 30.0) < 0.1) {
+                lat = 30.7333;
+                lon = 76.7794;
+            } else if (Math.abs(lat - 30.0) < 0.1 && Math.abs(lon - 70.0) < 0.1) {
+                lat = 30.7433;
+                lon = 76.7894;
+            }
+            
+            const latLng = { lat: lat, lng: lon };
             
             const marker = new google.maps.Marker({
                 position: latLng,
@@ -961,6 +979,8 @@ async function initializeDeviceSelectionMap() {
             
             marker.deviceId = String(d.id);
             marker.deviceIdentifier = String(d.deviceid);
+            marker.configuredLat = lat;
+            marker.configuredLon = lon;
 
             const infowindow = new google.maps.InfoWindow({
                 content: `
@@ -983,7 +1003,7 @@ async function initializeDeviceSelectionMap() {
             marker.addListener('click', () => {
                 infowindow.open(deviceSelectMap, marker);
                 selectDeviceById(d.id);
-                getGeocodedAddress(d.gps_lat, d.gps_lon, (addr) => {
+                getGeocodedAddress(lat, lon, (addr) => {
                     const el = document.getElementById(`marker-addr-${d.id}`);
                     if (el) el.textContent = addr;
                 });
@@ -994,7 +1014,7 @@ async function initializeDeviceSelectionMap() {
             validLocations++;
 
             // Preload address into the info window
-            getGeocodedAddress(d.gps_lat, d.gps_lon, (addr) => {
+            getGeocodedAddress(lat, lon, (addr) => {
                 google.maps.event.addListenerOnce(infowindow, 'domready', () => {
                     const el = document.getElementById(`marker-addr-${d.id}`);
                     if (el) el.textContent = addr;
@@ -1093,14 +1113,41 @@ async function initializeDeviceSelectionMap() {
 function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
     if (!deviceSelectMap) return;
     
-    const parsedLat = parseFloat(lat);
-    const parsedLon = parseFloat(lon);
+    let parsedLat = parseFloat(lat);
+    let parsedLon = parseFloat(lon);
     if (isNaN(parsedLat) || isNaN(parsedLon) || (parsedLat === 0 && parsedLon === 0)) return;
-    
-    const latLng = { lat: parsedLat, lng: parsedLon };
     
     // Find if marker already exists
     let marker = deviceSelectMarkers.find(m => String(m.deviceId) === String(deviceId));
+    
+    // Check if incoming coordinates are dummy coordinates
+    const isDummy1 = (Math.abs(parsedLat - 70.0) < 0.1 && Math.abs(parsedLon - 30.0) < 0.1);
+    const isDummy2 = (Math.abs(parsedLat - 30.0) < 0.1 && Math.abs(parsedLon - 70.0) < 0.1);
+    
+    if (isDummy1 || isDummy2) {
+        if (marker && marker.configuredLat !== undefined && marker.configuredLon !== undefined) {
+            // Use the already configured/resolved coordinates from the DB/backend
+            parsedLat = marker.configuredLat;
+            parsedLon = marker.configuredLon;
+        } else {
+            // Fallback to Chandigarh default overrides
+            if (isDummy1) {
+                parsedLat = 30.7333;
+                parsedLon = 76.7794;
+            } else {
+                parsedLat = 30.7433;
+                parsedLon = 76.7894;
+            }
+        }
+    } else {
+        // If they are real/new coordinates, update the marker's configured coordinates
+        if (marker) {
+            marker.configuredLat = parsedLat;
+            marker.configuredLon = parsedLon;
+        }
+    }
+    
+    const latLng = { lat: parsedLat, lng: parsedLon };
     
     if (marker) {
         marker.setPosition(latLng);
@@ -1129,6 +1176,8 @@ function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
             title: deviceName || `Device ${deviceId}`
         });
         marker.deviceId = String(deviceId);
+        marker.configuredLat = parsedLat;
+        marker.configuredLon = parsedLon;
         
         const infowindow = new google.maps.InfoWindow({
             content: `

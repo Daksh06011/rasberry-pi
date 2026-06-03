@@ -3022,7 +3022,7 @@ def get_device_locations():
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp
+                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
@@ -3032,7 +3032,7 @@ def get_device_locations():
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp
+                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE d.user_id = %s AND ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
@@ -3043,7 +3043,7 @@ def get_device_locations():
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp
+                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
@@ -3053,7 +3053,7 @@ def get_device_locations():
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp
+                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE d.user_id = %s AND ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
@@ -3071,6 +3071,26 @@ def get_device_locations():
                 
             lat = float(r[4]) if USE_SQLITE else float(r["gps_lat"])
             lon = float(r[5]) if USE_SQLITE else float(r["gps_lon"])
+            loc_str = r[7] if USE_SQLITE else r["location"]
+            
+            # 1. Try to parse coordinates from the location override string
+            if loc_str:
+                try:
+                    parts = str(loc_str).split(',')
+                    if len(parts) == 2:
+                        lat = float(parts[0].strip())
+                        lon = float(parts[1].strip())
+                except Exception:
+                    pass
+            
+            # 2. Apply override for default/dummy coordinates if not overridden by location field
+            if not loc_str:
+                if abs(lat - 70.0) < 0.1 and abs(lon - 30.0) < 0.1:
+                    lat = 30.7333
+                    lon = 76.7794
+                elif abs(lat - 30.0) < 0.1 and abs(lon - 70.0) < 0.1:
+                    lat = 30.7433
+                    lon = 76.7894
             
             # Skip invalid or 0,0 coordinates
             if lat == 0.0 and lon == 0.0:
