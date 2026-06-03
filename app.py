@@ -148,6 +148,71 @@ def make_naive_iso(val):
         return val.replace(' ', 'T')
     return str(val)
 
+def parse_db_timestamp(val):
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=timezone.utc)
+        return val.astimezone(timezone.utc)
+    if isinstance(val, str):
+        val_clean = val.replace('Z', '')
+        if '+' in val_clean:
+            val_clean = val_clean.split('+')[0]
+        val_clean = val_clean.replace('T', ' ')
+        try:
+            dt = datetime.strptime(val_clean, "%Y-%m-%d %H:%M:%S.%f")
+        except ValueError:
+            try:
+                dt = datetime.strptime(val_clean, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                try:
+                    dt = datetime.strptime(val_clean, "%Y-%m-%d")
+                except ValueError:
+                    return None
+        return dt.replace(tzinfo=timezone.utc)
+    return None
+
+def add_online_status_to_devices(cur, devices):
+    results = []
+    now_utc = datetime.now(timezone.utc)
+    for dev in devices:
+        dev_dict = dict(dev)
+        device_id = dev_dict['id']
+        
+        # Query max timestamp from sensor data
+        cur.execute("SELECT MAX(timestamp) FROM dust_sensor_data WHERE device_id = %s" if not USE_SQLITE else "SELECT MAX(timestamp) FROM dust_sensor_data WHERE device_id = ?", (device_id,))
+        t1_row = cur.fetchone()
+        t1 = t1_row[0] if t1_row else None
+        
+        # Query max timestamp from extended data
+        cur.execute("SELECT MAX(timestamp) FROM dust_extended_data WHERE device_id = %s" if not USE_SQLITE else "SELECT MAX(timestamp) FROM dust_extended_data WHERE device_id = ?", (device_id,))
+        t2_row = cur.fetchone()
+        t2 = t2_row[0] if t2_row else None
+        
+        # Parse timestamps to utc datetime
+        dt1 = parse_db_timestamp(t1)
+        dt2 = parse_db_timestamp(t2)
+        
+        # Determine latest
+        latest_dt = None
+        if dt1 and dt2:
+            latest_dt = max(dt1, dt2)
+        elif dt1:
+            latest_dt = dt1
+        elif dt2:
+            latest_dt = dt2
+            
+        dev_dict['last_seen'] = make_naive_iso(latest_dt)
+        if latest_dt:
+            is_online = (now_utc - latest_dt) <= timedelta(minutes=15)
+            dev_dict['online'] = is_online
+        else:
+            dev_dict['online'] = False
+            
+        results.append(dev_dict)
+    return results
+
 # Database configuration
 USE_SQLITE = os.getenv('USE_SQLITE', 'true').lower() == 'true'
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -682,6 +747,31 @@ def initialize_database():
             except Exception as e:
                 logging.error(f"Failed to seed PostgreSQL historical telemetry: {e}")
 
+        # Database migration: Ensure SGN-V3-12 (id=5) maps to the MAC address 'DC:B4:D9:2A:7C:00'
+        # and merge any telemetry that was written to a generic auto-created device (like id=12 or deviceid='DC:B4:D9:2A:7C:00')
+        try:
+            # Check if there is another device with deviceid = 'DC:B4:D9:2A:7C:00'
+            cur.execute("SELECT id FROM dust_devices WHERE deviceid = %s AND id != 5" if not USE_SQLITE else "SELECT id FROM dust_devices WHERE deviceid = ? AND id != 5", ('DC:B4:D9:2A:7C:00',))
+            other_dev = cur.fetchone()
+            if other_dev:
+                other_id = other_dev[0]
+                logging.info(f"[MIGRATION] Found auto-created device {other_id} with MAC 'DC:B4:D9:2A:7C:00'. Merging into device 5.")
+                # Move all data from other_id to 5
+                cur.execute("UPDATE dust_sensor_data SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_sensor_data SET device_id = 5 WHERE device_id = ?", (other_id,))
+                cur.execute("UPDATE dust_extended_data SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_extended_data SET device_id = 5 WHERE device_id = ?", (other_id,))
+                cur.execute("UPDATE dust_thresholds SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_thresholds SET device_id = 5 WHERE device_id = ?", (other_id,))
+                cur.execute("UPDATE dust_device_alerts SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_device_alerts SET device_id = 5 WHERE device_id = ?", (other_id,))
+                # Delete the other device
+                cur.execute("DELETE FROM dust_devices WHERE id = %s" if not USE_SQLITE else "DELETE FROM dust_devices WHERE id = ?", (other_id,))
+                logging.info(f"[MIGRATION] Merged and deleted device {other_id}.")
+            
+            # Ensure device 5 is updated to have deviceid = 'DC:B4:D9:2A:7C:00' and name = 'SGN-V3-12'
+            cur.execute("UPDATE dust_devices SET deviceid = %s, name = %s WHERE id = 5" if not USE_SQLITE else "UPDATE dust_devices SET deviceid = ?, name = ? WHERE id = 5", ('DC:B4:D9:2A:7C:00', 'SGN-V3-12'))
+            conn.commit()
+            logging.info("[MIGRATION] Successfully updated SGN-V3-12 unique key to MAC address 'DC:B4:D9:2A:7C:00'!")
+        except Exception as me:
+            logging.error(f"[MIGRATION] Failed to migrate device unique key / merge data: {me}")
+
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
         raise
@@ -726,8 +816,8 @@ def resolve_or_create_device(payload, data_source_id, cur):
     
     if row:
         device_id_db = row[0]
-        # Dynamically update the device name to whatever is received
-        if display_name and row[2] != display_name:
+        # Dynamically update the device name to whatever is received, only if the current name is empty or generic
+        if display_name and (not row[2] or row[2] == row[1]) and row[2] != display_name:
             try:
                 cur.execute("""
                     UPDATE dust_devices
@@ -2076,9 +2166,10 @@ def user_devices():
         """)
         
         devices = cur.fetchall()
+        devices_with_status = add_online_status_to_devices(cur, devices)
 
         # Return user-specific data
-        return jsonify({'success': True, 'devices': [dict(d) for d in devices], 'current_user_id': user_identity})
+        return jsonify({'success': True, 'devices': devices_with_status, 'current_user_id': user_identity})
         
     except Exception as e:
         import traceback
@@ -2103,8 +2194,9 @@ def demo_devices():
             ORDER BY d.created_at DESC
         """)
         devices = cur.fetchall()
+        devices_with_status = add_online_status_to_devices(cur, devices)
         
-        return jsonify({'success': True, 'devices': [dict(d) for d in devices], 'current_user_id': 1})
+        return jsonify({'success': True, 'devices': devices_with_status, 'current_user_id': 1})
         
     except Exception as e:
         logging.error(f"Error loading demo devices: {e}")
@@ -2701,6 +2793,15 @@ def get_data():
         current_aqi = aqi_level_payload(calc_aqi_index_pm25(current_pm25), current_pm25, current_pm10)
         average_aqi = aqi_level_payload(calc_aqi_index_pm25(avg_pm25), avg_pm25, avg_pm10)
 
+        # Get total records count for device
+        cur.execute("SELECT COUNT(*) FROM dust_sensor_data WHERE device_id = %s" if not USE_SQLITE else "SELECT COUNT(*) FROM dust_sensor_data WHERE device_id = ?", (device_id,))
+        count_sensor = cur.fetchone()[0] or 0
+
+        cur.execute("SELECT COUNT(*) FROM dust_extended_data WHERE device_id = %s" if not USE_SQLITE else "SELECT COUNT(*) FROM dust_extended_data WHERE device_id = ?", (device_id,))
+        count_extended = cur.fetchone()[0] or 0
+
+        total_records = max(count_sensor, count_extended)
+
         response = {
             "sensor": sensor,
             "status": {
@@ -2709,7 +2810,8 @@ def get_data():
                 "relay_state": "OFF",
                 "thresholds": thresholds
             },
-            "history": history
+            "history": history,
+            "total_records": total_records
         }
 
         if current_aqi or average_aqi:

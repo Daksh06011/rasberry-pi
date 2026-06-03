@@ -744,6 +744,19 @@ async function initializeDeviceSelection() {
                     option.setAttribute('data-relay', device.has_relay ? 'True' : 'False');
                     deviceSelect.appendChild(option);
                 });
+
+                // Update total devices count
+                const totalDevicesEl = document.getElementById('totalDevices');
+                if (totalDevicesEl) {
+                    totalDevicesEl.textContent = data.devices.length;
+                }
+
+                // Update online devices count
+                const onlineDevicesEl = document.getElementById('onlineDevices');
+                if (onlineDevicesEl) {
+                    const onlineCount = data.devices.filter(d => d.online).length;
+                    onlineDevicesEl.textContent = onlineCount;
+                }
             }
         }
     } catch (error) {
@@ -3684,10 +3697,10 @@ function initializeMap() {
 // ========================
 
 function updateQuickStats(data) {
-    // Update online devices count
-    const onlineDevices = document.getElementById('onlineDevices');
-    if (onlineDevices) {
-        onlineDevices.textContent = currentDeviceId ? '1' : '0';
+    // Update export count badge
+    const exportCount = document.getElementById('exportCount');
+    if (exportCount && data && data.total_records !== undefined) {
+        exportCount.textContent = `${data.total_records} records`;
     }
     
     // Update cloud cover
@@ -5006,7 +5019,6 @@ function calculateThresholdFrequency(data) {
 function updateQuickStats(data) {
     if (!data || !data.sensor) {
         // Set default values if no data
-        document.getElementById('onlineDevices').textContent = '0';
         const cc = document.getElementById('cloudCover');
         if (cc) cc.textContent = '--%';
         const nl = document.getElementById('noiseLevel');
@@ -5014,10 +5026,10 @@ function updateQuickStats(data) {
         return;
     }
     
-    // Update online devices count
-    const onlineDevices = document.getElementById('onlineDevices');
-    if (onlineDevices) {
-        onlineDevices.textContent = currentDeviceId ? '1' : '0';
+    // Update export count badge
+    const exportCount = document.getElementById('exportCount');
+    if (exportCount && data && data.total_records !== undefined) {
+        exportCount.textContent = `${data.total_records} records`;
     }
     
     // Update cloud cover
