@@ -521,6 +521,7 @@ let deviceSelectMarkers = [];
 let latestData = null;
 // Polling fallback when websockets are not available or disconnected
 let pollingIntervalId = null;
+let autoUpdateIntervalId = null;
 // Rigid maxima cache per chart
 const rigidMaxByChart = {};
 
@@ -762,6 +763,9 @@ async function initializeDeviceSelection() {
 }
 
 function handleDeviceSelection() {
+    // Stop any existing auto-update timer
+    stopAutoUpdateTimer();
+
     const deviceSelect = document.getElementById('deviceSelect');
     const selectedOption = deviceSelect.options[deviceSelect.selectedIndex];
 
@@ -804,6 +808,9 @@ function handleDeviceSelection() {
     // Load initial data
     console.log('Fetching initial data...');
     fetchData(24);
+
+    // Start 10-second auto-update timer for real-time dashboard data refresh
+    startAutoUpdateTimer();
 
     // Pan Google Map to the selected device's location
     if (deviceSelectMap && deviceSelectMarkers.length > 0) {
@@ -884,6 +891,30 @@ function joinDeviceRoom(deviceId) {
     }
 }
 
+function getGeocodedAddress(lat, lon, callback) {
+    const latLng = { lat: parseFloat(lat), lng: parseFloat(lon) };
+    if (isNaN(latLng.lat) || isNaN(latLng.lng)) {
+        callback("Unknown Location");
+        return;
+    }
+    if (Math.abs(latLng.lat - 70.0) < 1.0 && Math.abs(latLng.lng - 30.0) < 1.0) {
+        callback("Barents Sea (Arctic Ocean)");
+        return;
+    }
+    if (typeof google !== 'undefined' && google.maps && google.maps.Geocoder) {
+        const geocoder = new google.maps.Geocoder();
+        geocoder.geocode({ location: latLng }, (results, status) => {
+            if (status === 'OK' && results[0]) {
+                callback(results[0].formatted_address);
+            } else {
+                callback(`Coordinates: ${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)}`);
+            }
+        });
+    } else {
+        callback(`Coordinates: ${latLng.lat.toFixed(4)}, ${latLng.lng.toFixed(4)}`);
+    }
+}
+
 // ========================
 // DEVICE SELECTION MAP
 // ========================
@@ -938,7 +969,7 @@ async function initializeDeviceSelectionMap() {
                         <div class="small text-muted mb-2">Device ID: ${d.deviceid}</div>
                         <div class="d-flex align-items-center mb-1">
                             <i class="bi bi-geo-alt-fill text-danger me-2"></i>
-                            <span class="small">Lat: ${d.gps_lat.toFixed(5)}, Lon: ${d.gps_lon.toFixed(5)}</span>
+                            <span class="small" id="marker-addr-${d.id}">Loading location...</span>
                         </div>
                         <div class="small text-secondary mt-2">
                             Last active: ${d.last_update ? new Date(d.last_update).toLocaleString() : 'Never'}
@@ -952,11 +983,23 @@ async function initializeDeviceSelectionMap() {
             marker.addListener('click', () => {
                 infowindow.open(deviceSelectMap, marker);
                 selectDeviceById(d.id);
+                getGeocodedAddress(d.gps_lat, d.gps_lon, (addr) => {
+                    const el = document.getElementById(`marker-addr-${d.id}`);
+                    if (el) el.textContent = addr;
+                });
             });
 
             deviceSelectMarkers.push(marker);
             bounds.extend(latLng);
             validLocations++;
+
+            // Preload address into the info window
+            getGeocodedAddress(d.gps_lat, d.gps_lon, (addr) => {
+                google.maps.event.addListenerOnce(infowindow, 'domready', () => {
+                    const el = document.getElementById(`marker-addr-${d.id}`);
+                    if (el) el.textContent = addr;
+                });
+            });
         });
 
         if (validLocations > 0) {
@@ -1008,7 +1051,21 @@ async function initializeDeviceSelectionMap() {
     if (fitBtn) fitBtn.addEventListener('click', () => {
         const bounds = new google.maps.LatLngBounds();
         deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
-        if (deviceSelectMarkers.length) deviceSelectMap.fitBounds(bounds);
+        if (deviceSelectMarkers.length) {
+            deviceSelectMap.fitBounds(bounds);
+            if (deviceSelectMarkers.length === 1) {
+                google.maps.event.addListenerOnce(deviceSelectMap, 'idle', () => {
+                    const center = bounds.getCenter();
+                    const lat = center.lat();
+                    const lng = center.lng();
+                    if ((Math.abs(lat - 70.0) < 1.0 && Math.abs(lng - 30.0) < 1.0) || (lat === 0.0 && lng === 0.0)) {
+                        deviceSelectMap.setZoom(4);
+                    } else if (deviceSelectMap.getZoom() > 8) {
+                        deviceSelectMap.setZoom(8);
+                    }
+                });
+            }
+        }
     });
 
     await refreshMarkers();
@@ -1028,21 +1085,23 @@ function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
     
     if (marker) {
         marker.setPosition(latLng);
-        if (marker.infoWindow) {
-            marker.infoWindow.setContent(`
-                <div class="p-3 font-sans text-dark" style="max-width: 250px;">
-                    <h6 class="mb-1 text-primary fw-bold">${deviceName || marker.title}</h6>
-                    <div class="small text-muted mb-2">Device ID: ${marker.deviceIdentifier || deviceId}</div>
-                    <div class="d-flex align-items-center mb-1">
-                        <i class="bi bi-geo-alt-fill text-danger me-2"></i>
-                        <span class="small">Lat: ${latLng.lat.toFixed(5)}, Lon: ${latLng.lng.toFixed(5)}</span>
+        getGeocodedAddress(parsedLat, parsedLon, (addr) => {
+            if (marker.infoWindow) {
+                marker.infoWindow.setContent(`
+                    <div class="p-3 font-sans text-dark" style="max-width: 250px;">
+                        <h6 class="mb-1 text-primary fw-bold">${deviceName || marker.title}</h6>
+                        <div class="small text-muted mb-2">Device ID: ${marker.deviceIdentifier || deviceId}</div>
+                        <div class="d-flex align-items-center mb-1">
+                            <i class="bi bi-geo-alt-fill text-danger me-2"></i>
+                            <span class="small">${addr}</span>
+                        </div>
+                        <div class="small text-secondary mt-2">
+                            Last active: ${new Date().toLocaleString()}
+                        </div>
                     </div>
-                    <div class="small text-secondary mt-2">
-                        Last active: ${new Date().toLocaleString()}
-                    </div>
-                </div>
-            `);
-        }
+                `);
+            }
+        });
     } else {
         // Create new marker
         marker = new google.maps.Marker({
@@ -1059,7 +1118,7 @@ function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
                     <div class="small text-muted mb-2">Device ID: ${deviceId}</div>
                     <div class="d-flex align-items-center mb-1">
                         <i class="bi bi-geo-alt-fill text-danger me-2"></i>
-                        <span class="small">Lat: ${latLng.lat.toFixed(5)}, Lon: ${latLng.lng.toFixed(5)}</span>
+                        <span class="small" id="marker-addr-${deviceId}">Loading location...</span>
                     </div>
                     <div class="small text-secondary mt-2">
                         Last active: ${new Date().toLocaleString()}
@@ -1073,9 +1132,20 @@ function updateGoogleMapLocation(deviceId, lat, lon, deviceName) {
         marker.addListener('click', () => {
             infowindow.open(deviceSelectMap, marker);
             selectDeviceById(deviceId);
+            getGeocodedAddress(parsedLat, parsedLon, (addr) => {
+                const el = document.getElementById(`marker-addr-${deviceId}`);
+                if (el) el.textContent = addr;
+            });
         });
         
         deviceSelectMarkers.push(marker);
+        
+        getGeocodedAddress(parsedLat, parsedLon, (addr) => {
+            google.maps.event.addListenerOnce(infowindow, 'domready', () => {
+                const el = document.getElementById(`marker-addr-${deviceId}`);
+                if (el) el.textContent = addr;
+            });
+        });
     }
     
     // If the updated device is the currently selected device, pan/center map to it
@@ -2784,6 +2854,27 @@ function stopRealtimePolling() {
     }
 }
 
+function startAutoUpdateTimer() {
+    if (autoUpdateIntervalId) {
+        clearInterval(autoUpdateIntervalId);
+    }
+    console.log('Starting 10-second auto-update timer for device:', currentDeviceId);
+    autoUpdateIntervalId = setInterval(() => {
+        if (currentDeviceId) {
+            console.log('Auto-updating dashboard (10s poll)...');
+            fetchData(24, false); // Fetch last 24h data silently
+        }
+    }, 10000);
+}
+
+function stopAutoUpdateTimer() {
+    if (autoUpdateIntervalId) {
+        console.log('Stopping auto-update timer');
+        clearInterval(autoUpdateIntervalId);
+        autoUpdateIntervalId = null;
+    }
+}
+
 // Add missing parameter trend chart update function
 function updateParameterTrendChart(parameter) {
     if (!currentDeviceId) return;
@@ -3997,6 +4088,19 @@ function initializeMapToggle() {
                             const bounds = new google.maps.LatLngBounds();
                             deviceSelectMarkers.forEach(m => bounds.extend(m.getPosition()));
                             deviceSelectMap.fitBounds(bounds);
+                            
+                            if (deviceSelectMarkers.length === 1) {
+                                google.maps.event.addListenerOnce(deviceSelectMap, 'idle', () => {
+                                    const center = bounds.getCenter();
+                                    const lat = center.lat();
+                                    const lng = center.lng();
+                                    if ((Math.abs(lat - 70.0) < 1.0 && Math.abs(lng - 30.0) < 1.0) || (lat === 0.0 && lng === 0.0)) {
+                                        deviceSelectMap.setZoom(4);
+                                    } else if (deviceSelectMap.getZoom() > 8) {
+                                        deviceSelectMap.setZoom(8);
+                                    }
+                                });
+                            }
                         }
                     }
                 } else {
