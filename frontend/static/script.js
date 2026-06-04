@@ -4047,27 +4047,31 @@ function getParameterLabel(param) {
 // Shadowed updateCharts function removed and consolidated to avoid clashing declarations
 
 function calculateAQI(pm25) {
+    // CPCB (India) PM2.5 AQI calculation
     if (pm25 === null || pm25 === undefined || pm25 === '') return null;
-    const c = Math.round(Number(pm25) * 10) / 10;
-    let iLow, iHigh, cLow, cHigh;
-    if (c <= 12.0) { cLow = 0.0; cHigh = 12.0; iLow = 0; iHigh = 50; }
-    else if (c <= 35.4) { cLow = 12.1; cHigh = 35.4; iLow = 51; iHigh = 100; }
-    else if (c <= 55.4) { cLow = 35.5; cHigh = 55.4; iLow = 101; iHigh = 150; }
-    else if (c <= 150.4) { cLow = 55.5; cHigh = 150.4; iLow = 151; iHigh = 200; }
-    else if (c <= 250.4) { cLow = 150.5; cHigh = 250.4; iLow = 201; iHigh = 300; }
-    else if (c <= 350.4) { cLow = 250.5; cHigh = 350.4; iLow = 301; iHigh = 400; }
-    else { cLow = 350.5; cHigh = 500.4; iLow = 401; iHigh = 500; }
+    const c = Math.round(Number(pm25));
     
-    return Math.round(((iHigh - iLow) / (cHigh - cLow)) * (c - cLow) + iLow);
+    const interpolate = (val, cLow, cHigh, iLow, iHigh) => {
+        return Math.round(((iHigh - iLow) / (cHigh - cLow)) * (val - cLow) + iLow);
+    };
+
+    if (c <= 30)  return interpolate(c, 0, 30, 0, 50);
+    if (c <= 60)  return interpolate(c, 31, 60, 51, 100);
+    if (c <= 90)  return interpolate(c, 61, 90, 101, 200);
+    if (c <= 120) return interpolate(c, 91, 120, 201, 300);
+    if (c <= 250) return interpolate(c, 121, 250, 301, 400);
+    if (c <= 380) return interpolate(c, 251, 380, 401, 500);
+    return 500; // Cap at Severe index maximum 500
 }
 
 function getAQIHexColor(aqi) {
-    if (aqi <= 50) return '#00e400';
-    if (aqi <= 100) return '#ffff00';
-    if (aqi <= 150) return '#ff7e00';
-    if (aqi <= 200) return '#ff0000';
-    if (aqi <= 300) return '#8f3f97';
-    return '#7e0023';
+    // CPCB (India) AQI color bands
+    if (aqi <= 50) return '#00B050';  // Good - Green
+    if (aqi <= 100) return '#92D050'; // Satisfactory - Light Green
+    if (aqi <= 200) return '#FFFF00'; // Moderately Polluted - Yellow
+    if (aqi <= 300) return '#FFC000'; // Poor - Orange
+    if (aqi <= 400) return '#FF0000'; // Very Poor - Red
+    return '#C00000';                 // Severe - Maroon
 }
 
 function updateExtendedCharts(data) {
@@ -4845,13 +4849,21 @@ function updateUnifiedChartStatistics(data) {
 }
 
 function calculateAQI(pm25) {
-    // US EPA PM2.5 AQI calculation
-    if (pm25 <= 12.0) return (pm25 / 12.0) * 50;
-    if (pm25 <= 35.4) return ((pm25 - 12.1) / 23.3) * 50 + 50;
-    if (pm25 <= 55.4) return ((pm25 - 35.5) / 19.9) * 50 + 100;
-    if (pm25 <= 150.4) return ((pm25 - 55.5) / 94.9) * 50 + 150;
-    if (pm25 <= 250.4) return ((pm25 - 150.5) / 99.9) * 50 + 200;
-    return ((pm25 - 250.5) / 500.0) * 100 + 300;
+    // CPCB (India) PM2.5 AQI calculation
+    if (pm25 === null || pm25 === undefined || pm25 === '') return null;
+    const c = Math.round(Number(pm25));
+    
+    const interpolate = (val, cLow, cHigh, iLow, iHigh) => {
+        return Math.round(((iHigh - iLow) / (cHigh - cLow)) * (val - cLow) + iLow);
+    };
+
+    if (c <= 30)  return interpolate(c, 0, 30, 0, 50);
+    if (c <= 60)  return interpolate(c, 31, 60, 51, 100);
+    if (c <= 90)  return interpolate(c, 61, 90, 101, 200);
+    if (c <= 120) return interpolate(c, 91, 120, 201, 300);
+    if (c <= 250) return interpolate(c, 121, 250, 301, 400);
+    if (c <= 380) return interpolate(c, 251, 380, 401, 500);
+    return 500;
 }
 
 function toggleChartFill() {
