@@ -3814,33 +3814,33 @@ function updateAQI(data) {
 
     console.log('Calculating AQI for PM2.5:', pm25);
 
-    let aqi, label, description, color;
+    let aqi = calculateAQI(pm25);
+    let label, description, color;
 
-    if (pm25 <= 12) {
-        aqi = Math.round((50 / 12) * pm25);
+    if (aqi <= 50) {
         label = 'Good';
         description = 'Air quality is satisfactory';
-        color = '#00e400';
-    } else if (pm25 <= 35.4) {
-        aqi = Math.round(51 + ((100 - 51) / (35.4 - 12.1)) * (pm25 - 12.1));
-        label = 'Moderate';
+        color = '#00B050';
+    } else if (aqi <= 100) {
+        label = 'Satisfactory';
         description = 'Air quality is acceptable for most';
-        color = '#ffff00';
-    } else if (pm25 <= 55.4) {
-        aqi = Math.round(101 + ((150 - 101) / (55.4 - 35.5)) * (pm25 - 35.5));
-        label = 'Unhealthy for Sensitive';
-        description = 'Sensitive individuals may experience symptoms';
-        color = '#ff7e00';
-    } else if (pm25 <= 150.4) {
-        aqi = Math.round(151 + ((200 - 151) / (150.4 - 55.5)) * (pm25 - 55.5));
-        label = 'Unhealthy';
-        description = 'Everyone may experience symptoms';
-        color = '#ff0000';
+        color = '#92D050';
+    } else if (aqi <= 200) {
+        label = 'Moderately Polluted';
+        description = 'May cause breathing discomfort to sensitive people';
+        color = '#FFFF00';
+    } else if (aqi <= 300) {
+        label = 'Poor';
+        description = 'May cause breathing discomfort to most people on prolonged exposure';
+        color = '#FFC000';
+    } else if (aqi <= 400) {
+        label = 'Very Poor';
+        description = 'May cause respiratory illness on prolonged exposure';
+        color = '#FF0000';
     } else {
-        aqi = Math.round(201 + ((300 - 201) / (250.4 - 150.5)) * (pm25 - 150.5));
-        label = 'Very Unhealthy';
-        description = 'Health warnings of emergency conditions';
-        color = '#8f3f97';
+        label = 'Severe';
+        description = 'May cause respiratory effects even on healthy people';
+        color = '#C00000';
     }
 
     console.log('Calculated AQI:', { aqi, label, description, color });
