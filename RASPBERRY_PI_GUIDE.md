@@ -232,3 +232,91 @@ Now open a browser on any device in the local network and visit the IP address o
 > 1. **Use Wired Ethernet**: Always connect your Raspberry Pi to the local network using a wired Ethernet connection rather than Wi-Fi.
 > 2. **Auto-Mount Security**: The NFS/CIFS mount flags in this guide include `nofail` and `x-systemd.automount` to ensure the Pi boots even if the NAS is temporarily offline, and auto-mounts the share on first access.
 > 3. **SQLite WAL Mode**: The dashboard codebase is configured to run in **Write-Ahead Logging (WAL)** mode. WAL mode reduces lock contention and improves read/write speeds over network drives.
+
+---
+
+## 7. Exposing Your Dashboard to the Internet (Access from Anywhere)
+
+By default, the dashboard is only accessible to devices on the same local Wi-Fi/network (e.g., `http://192.168.31.195`). To share a link so that anyone can access the dashboard from anywhere, choose one of these methods.
+
+### Option A: Cloudflare Tunnels (Recommended — Secure & Permanent)
+Cloudflare Tunnels are the most secure, stable, and completely free way to share your Pi. It connects your Pi to a custom domain (e.g. `dashboard.yourdomain.com`) without opening any ports on your home router.
+
+1. **Install Cloudflared on the Pi**:
+   ```bash
+   # Download Cloudflare tunnel daemon
+   curl -L --output cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
+   sudo dpkg -i cloudflared.deb
+   ```
+   *(Note: If you run a 32-bit Raspberry Pi OS instead of 64-bit, download `cloudflared-linux-arm.deb` instead).*
+
+2. **Authenticate with Cloudflare**:
+   ```bash
+   cloudflared tunnel login
+   ```
+   *Follow the printed link, log in to your free Cloudflare account, and authorize your domain name.*
+
+3. **Create the Tunnel**:
+   ```bash
+   cloudflared tunnel create sgn-monitoring
+   ```
+   *Note the Tunnel ID generated (e.g., `a1b2c3d4-e5f6-...`).*
+
+4. **Configure the Tunnel**:
+   Create a configuration file `~/.cloudflared/config.yml`:
+   ```bash
+   nano ~/.cloudflared/config.yml
+   ```
+   Add the following (replace the values with your Tunnel ID, domain name, and local server URL):
+   ```yaml
+   tunnel: a1b2c3d4-e5f6-your-tunnel-id
+   credentials-file: /home/raspberry/.cloudflared/a1b2c3d4-e5f6-your-tunnel-id.json
+
+   ingress:
+     - hostname: dashboard.yourdomain.com
+       service: http://localhost:80
+     - service: http_status:404
+   ```
+
+5. **Route the Domain**:
+   ```bash
+   cloudflared tunnel route dns sgn-monitoring dashboard.yourdomain.com
+   ```
+
+6. **Install as a Service** (so it starts automatically on boot):
+   ```bash
+   sudo cloudflared --config /home/raspberry/.cloudflared/config.yml service install
+   sudo systemctl start cloudflared
+   ```
+   *Anyone visiting `https://dashboard.yourdomain.com` from anywhere in the world will now be able to securely use the dashboard!*
+
+---
+
+### Option B: Ngrok (Fastest for Testing)
+Ngrok is the absolute fastest way to get a public URL for temporary testing or immediate sharing.
+
+1. **Install Ngrok on the Pi**:
+   ```bash
+   curl -s https://ngrok-agent.s3.amazonaws.com/files/gpa.key | sudo gpg --dearmor -o /etc/apt/keyrings/ngrok.gpg
+   echo "deb [signed-by=/etc/apt/keyrings/ngrok.gpg] https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+   sudo apt update && sudo apt install ngrok
+   ```
+
+2. **Connect Your Account**:
+   * Sign up for a free account at [ngrok.com](https://ngrok.com) and copy your Authtoken.
+   ```bash
+   ngrok config add-authtoken <YOUR_AUTHTOKEN>
+   ```
+
+3. **Start the Tunnel**:
+   Start a tunnel pointing to your Nginx port (port 80):
+   ```bash
+   ngrok http 80
+   ```
+   Ngrok will print a public URL in the terminal, looking like:
+   `Forwarding  https://a5b4-192-168-31-195.ngrok-free.app -> http://localhost:80`
+
+4. **Share the Link**:
+   * Anyone who visits the `https://...ngrok-free.app` URL can access the dashboard.
+   * *Note: The free tier URL changes every time you restart the command. For a permanent URL, use Option A.*
+
