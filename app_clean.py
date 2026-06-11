@@ -131,88 +131,6 @@ def user_lookup_callback(_jwt_header, jwt_data):
 logging.basicConfig(level=logging.INFO)
 logging = logging.getLogger(__name__)
 
-def make_naive_iso(val):
-    if val is None:
-        return None
-    if not val:
-        return ""
-    if hasattr(val, 'isoformat'):
-        if hasattr(val, 'replace'):
-            val = val.replace(tzinfo=None)
-        return val.isoformat()
-    if isinstance(val, str):
-        if '+' in val:
-            val = val.split('+')[0]
-        elif val.endswith('Z'):
-            val = val[:-1]
-        return val.replace(' ', 'T')
-    return str(val)
-
-def parse_db_timestamp(val):
-    if not val:
-        return None
-    if isinstance(val, datetime):
-        if val.tzinfo is None:
-            return val.replace(tzinfo=timezone.utc)
-        return val.astimezone(timezone.utc)
-    if isinstance(val, str):
-        val_clean = val.replace('Z', '')
-        if '+' in val_clean:
-            val_clean = val_clean.split('+')[0]
-        val_clean = val_clean.replace('T', ' ')
-        try:
-            dt = datetime.strptime(val_clean, "%Y-%m-%d %H:%M:%S.%f")
-        except ValueError:
-            try:
-                dt = datetime.strptime(val_clean, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                try:
-                    dt = datetime.strptime(val_clean, "%Y-%m-%d")
-                except ValueError:
-                    return None
-        return dt.replace(tzinfo=timezone.utc)
-    return None
-
-def add_online_status_to_devices(cur, devices):
-    results = []
-    now_utc = datetime.now(timezone.utc)
-    for dev in devices:
-        dev_dict = dict(dev)
-        device_id = dev_dict['id']
-        
-        # Query max timestamp from sensor data
-        cur.execute("SELECT MAX(timestamp) FROM dust_sensor_data WHERE device_id = %s" if not USE_SQLITE else "SELECT MAX(timestamp) FROM dust_sensor_data WHERE device_id = ?", (device_id,))
-        t1_row = cur.fetchone()
-        t1 = t1_row[0] if t1_row else None
-        
-        # Query max timestamp from extended data
-        cur.execute("SELECT MAX(timestamp) FROM dust_extended_data WHERE device_id = %s" if not USE_SQLITE else "SELECT MAX(timestamp) FROM dust_extended_data WHERE device_id = ?", (device_id,))
-        t2_row = cur.fetchone()
-        t2 = t2_row[0] if t2_row else None
-        
-        # Parse timestamps to utc datetime
-        dt1 = parse_db_timestamp(t1)
-        dt2 = parse_db_timestamp(t2)
-        
-        # Determine latest
-        latest_dt = None
-        if dt1 and dt2:
-            latest_dt = max(dt1, dt2)
-        elif dt1:
-            latest_dt = dt1
-        elif dt2:
-            latest_dt = dt2
-            
-        dev_dict['last_seen'] = make_naive_iso(latest_dt)
-        if latest_dt:
-            is_online = (now_utc - latest_dt) <= timedelta(minutes=15)
-            dev_dict['online'] = is_online
-        else:
-            dev_dict['online'] = False
-            
-        results.append(dev_dict)
-    return results
-
 # Database configuration
 USE_SQLITE = os.getenv('USE_SQLITE', 'true').lower() == 'true'
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -278,142 +196,7 @@ if USE_SQLITE:
             pm10 REAL,
             tsp REAL
         )''')
-
-        cur.execute('''CREATE TABLE IF NOT EXISTS dust_thresholds (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id INTEGER REFERENCES dust_devices(id) ON DELETE CASCADE,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            pm1 REAL DEFAULT 50.0,
-            pm2_5 REAL DEFAULT 75.0,
-            pm4 REAL DEFAULT 100.0,
-            pm10 REAL DEFAULT 150.0,
-            tsp REAL DEFAULT 200.0,
-            averaging_window INTEGER DEFAULT 15
-        )''')
-
-        cur.execute('''CREATE TABLE IF NOT EXISTS dust_device_alerts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            device_id INTEGER REFERENCES dust_devices(id) ON DELETE CASCADE,
-            alert_type TEXT NOT NULL,
-            message TEXT NOT NULL,
-            threshold_value REAL,
-            measured_value REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
         
-        # Seed default admin user if it does not exist
-        cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
-        if not cur.fetchone():
-            from werkzeug.security import generate_password_hash
-            admin_hash = generate_password_hash('admin123')
-            cur.execute(
-                "INSERT INTO dust_users (username, email, password_hash, is_admin) VALUES ('admin', 'admin@example.com', ?, 1)",
-                (admin_hash,)
-            )
-            logging.info("Seeded default admin user into SQLite database")
-
-        # Seed default data source if it does not exist
-        cur.execute("SELECT id FROM dust_data_sources WHERE id = 1")
-        if not cur.fetchone():
-            cur.execute("""
-                INSERT INTO dust_data_sources (id, description, source_type, broker_url, username, password)
-                VALUES (1, 'HiveMQ Public Broker', 'mqtt', 'broker.hivemq.com', 'Daksh', 'Sgn@1234')
-            """)
-            logging.info("Seeded default data source into SQLite database")
-
-        # Seed default device if it does not exist
-        cur.execute("SELECT id FROM dust_devices WHERE id = 5")
-        if not cur.fetchone():
-            cur.execute("""
-                INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
-                VALUES (5, 'SGN-V3-12', 'SGN-V3-12', 1, 1, 0)
-            """)
-            logging.info("Seeded default device SGN-V3-12 into SQLite database")
-        else:
-            # Migrate existing xiao-cam-01 to SGN-V3-12 to preserve all historical data under the new name
-            cur.execute("""
-                UPDATE dust_devices 
-                SET deviceid = 'SGN-V3-12', name = 'SGN-V3-12' 
-                WHERE deviceid = 'xiao-cam-01' AND id = 5
-            """)
-            logging.info("Migrated existing default device from xiao-cam-01 to SGN-V3-12 if present")
-        # Ensure historical telemetry data is seeded if empty in SQLite
-        try:
-            cur.execute("SELECT COUNT(id) FROM dust_sensor_data WHERE device_id = 5")
-            count = cur.fetchone()[0]
-            if count == 0:
-                logging.info("SQLite sensor data is empty. Seeding historical telemetry for SGN-V3-12...")
-                from datetime import datetime, timedelta, timezone
-                import random
-                import json
-                
-                now = datetime.now(timezone.utc)
-                for i in range(15):
-                    timestamp = now - timedelta(minutes=(14 - i))
-                    timestamp_str = timestamp.isoformat().replace('+00:00', 'Z')
-                    
-                    pm1 = round(random.uniform(5.0, 12.0), 1)
-                    pm2_5 = round(random.uniform(10.0, 24.0), 1)
-                    pm4 = round(random.uniform(12.0, 28.0), 1)
-                    pm10 = round(random.uniform(15.0, 42.0), 1)
-                    tsp = round(random.uniform(18.0, 48.0), 1)
-                    
-                    temperature = round(random.uniform(22.0, 24.8), 1)
-                    humidity = round(random.uniform(45.0, 58.0), 1)
-                    pressure = round(random.uniform(1011.5, 1013.2), 1)
-                    voc = round(random.uniform(90.0, 130.0), 1)
-                    no2 = round(random.uniform(25.0, 38.0), 1)
-                    noise = round(random.uniform(46.0, 54.0), 1)
-                    lux = round(random.uniform(100.0, 300.0), 1)
-                    uv = round(random.uniform(0.1, 1.2), 1)
-                    battery = round(random.uniform(75.0, 95.0), 1)
-                    
-                    raw_payload = {
-                        "site": "SGN-V3-12",
-                        "mac": "94:A9:90:04:6A:70",
-                        "ts": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                        "ip": "192.168.31.92",
-                        "rssi": -58,
-                        "lat": 51.5074,
-                        "lon": -0.1278,
-                        "sound": noise,
-                        "no2": no2,
-                        "voc": voc,
-                        "tsi": "token_http",
-                        "tsi_serial": "81432008054",
-                        "tsi_pm1": pm1,
-                        "tsi_pm25": pm2_5,
-                        "tsi_pm4": pm4,
-                        "tsi_pm10": pm10,
-                        "tsi_temp": temperature,
-                        "tsi_rh": humidity
-                    }
-                    
-                    cur.execute("""
-                        INSERT INTO dust_sensor_data (timestamp, device_id, data_source_id, pm1, pm2_5, pm4, pm10, tsp)
-                        VALUES (?, 5, 1, ?, ?, ?, ?, ?)
-                    """, (timestamp_str, pm1, pm2_5, pm4, pm10, tsp))
-                    
-                    cur.execute("""
-                        INSERT INTO dust_extended_data (
-                            device_id, timestamp, temperature_c, humidity_percent, pressure_hpa,
-                            voc_ppb, no2_ppb, pm1, pm2_5, pm4, pm10, tsp_um,
-                            gps_lat, gps_lon, gps_alt_m, gps_speed_kmh, cloud_cover_percent,
-                            noise_db, lux, uv_index, battery_percent, raw_payload
-                        ) VALUES (
-                            5, ?, ?, ?, ?,
-                            ?, ?, ?, ?, ?, ?, ?,
-                            51.5074, -0.1278, 0, 0, 0,
-                            ?, ?, ?, ?, ?
-                        )
-                    """, (timestamp_str, temperature, humidity, pressure,
-                          voc, no2, pm1, pm2_5, pm4, pm10, tsp,
-                          noise, lux, uv, battery, json.dumps(raw_payload)))
-                
-                logging.info("Successfully seeded 15 SQLite historical telemetry points")
-        except Exception as e:
-            logging.error(f"Failed to seed SQLite historical telemetry: {e}")
-            
         conn.commit()
         return conn
     
@@ -532,57 +315,9 @@ def put_db_connection(conn):
         logging.error(f"Error returning connection to pool: {e}")
 
 
-def start_data_pruning_thread():
-    """Start a background daemon thread to prune data older than RETENTION_DAYS periodically."""
-    def prune_loop():
-        # Delay initial execution slightly to allow app startup to complete smoothly
-        time.sleep(10)
-        while True:
-            try:
-                retention_days = int(os.getenv('RETENTION_DAYS', '90'))
-                logging.info(f"[PRUNING] Starting database pruning. Retention window: {retention_days} days...")
-                conn = get_db_connection()
-                cur = get_db_cursor(conn)
-                
-                # Calculate cut-off time
-                cutoff_time = datetime.now(timezone.utc) - timedelta(days=retention_days)
-                
-                if USE_SQLITE:
-                    cutoff_str = cutoff_time.isoformat().replace('+00:00', 'Z')
-                    
-                    cur.execute("DELETE FROM dust_sensor_data WHERE timestamp < ?", (cutoff_str,))
-                    sensor_deleted = cur.rowcount
-                    
-                    cur.execute("DELETE FROM dust_extended_data WHERE timestamp < ?", (cutoff_str,))
-                    extended_deleted = cur.rowcount
-                    
-                    cur.execute("DELETE FROM dust_device_alerts WHERE created_at < datetime('now', ?)", (f"-{retention_days} days",))
-                    alerts_deleted = cur.rowcount
-                else:
-                    cur.execute("DELETE FROM dust_sensor_data WHERE timestamp < %s", (cutoff_time,))
-                    sensor_deleted = cur.rowcount
-                    
-                    cur.execute("DELETE FROM dust_extended_data WHERE timestamp < %s", (cutoff_time,))
-                    extended_deleted = cur.rowcount
-                    
-                    cur.execute("DELETE FROM dust_device_alerts WHERE created_at < NOW() - CAST(%s || ' days' AS INTERVAL)", (str(retention_days),))
-                    alerts_deleted = cur.rowcount
-                
-                conn.commit()
-                logging.info(f"[PRUNING] Database pruning complete. Deleted rows: "
-                             f"sensor_data={sensor_deleted}, extended_data={extended_deleted}, alerts={alerts_deleted}")
-            except Exception as e:
-                logging.error(f"[PRUNING] Error during database pruning: {e}")
-            finally:
-                if 'conn' in locals() and conn:
-                    put_db_connection(conn)
-            
-            # Run once every 24 hours
-            time.sleep(86400)
-
-    thread = threading.Thread(target=prune_loop, daemon=True)
-    thread.start()
-    logging.info("[PRUNING] Data pruning background thread spawned.")
+def release_db_connection(conn):
+    """Backward-compatible alias for put_db_connection"""
+    put_db_connection(conn)
 
 
 
@@ -620,8 +355,7 @@ def initialize_database():
                 cloud_cover_percent REAL,
                 lux REAL,
                 uv_index REAL,
-                battery_percent REAL,
-                raw_payload TEXT
+                battery_percent REAL
             )
             """)
             conn.commit()
@@ -663,162 +397,18 @@ def initialize_database():
                 cloud_cover_percent DOUBLE PRECISION,
                 lux DOUBLE PRECISION,
                 uv_index DOUBLE PRECISION,
-                battery_percent DOUBLE PRECISION,
-                raw_payload TEXT
+                battery_percent DOUBLE PRECISION
             )
             """)
             conn.commit()
 
-            # Ensure admin user is seeded and password is valid
+            # Ensure admin password is valid
             try:
                 admin_hash = generate_password_hash('admin123')
-                cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
-                if not cur.fetchone():
-                    cur.execute(
-                        "INSERT INTO dust_users (username, email, password_hash, is_admin) VALUES ('admin', 'admin@example.com', %s, TRUE)",
-                        (admin_hash,)
-                    )
-                    logging.info("Seeded default admin user into PostgreSQL")
-                else:
-                    cur.execute("UPDATE dust_users SET password_hash = %s WHERE username = 'admin'", (admin_hash,))
+                cur.execute("UPDATE dust_users SET password_hash = %s WHERE username = 'admin'", (admin_hash,))
                 conn.commit()
             except Exception as e:
-                logging.error(f"Failed to seed/reset admin user: {e}")
-
-            # Ensure default data source is seeded
-            try:
-                cur.execute("SELECT id FROM dust_data_sources WHERE id = 1")
-                if not cur.fetchone():
-                    cur.execute("""
-                        INSERT INTO dust_data_sources (id, description, source_type, broker_url, username, password)
-                        VALUES (1, 'HiveMQ Public Broker', 'mqtt', 'broker.hivemq.com', 'Daksh', 'Sgn@1234')
-                    """)
-                    logging.info("Seeded default data source into PostgreSQL")
-                conn.commit()
-            except Exception as e:
-                logging.error(f"Failed to seed data source: {e}")
-
-            # Ensure default device is seeded
-            try:
-                cur.execute("SELECT id FROM dust_devices WHERE id = 5")
-                if not cur.fetchone():
-                    cur.execute("""
-                        INSERT INTO dust_devices (id, deviceid, name, user_id, data_source_id, has_relay)
-                        VALUES (5, 'SGN-V3-12', 'SGN-V3-12', 1, 1, FALSE)
-                    """)
-                    logging.info("Seeded default device SGN-V3-12 into PostgreSQL")
-                else:
-                    cur.execute("""
-                        UPDATE dust_devices 
-                        SET deviceid = 'SGN-V3-12', name = 'SGN-V3-12' 
-                        WHERE deviceid = 'xiao-cam-01' AND id = 5
-                    """)
-                conn.commit()
-            except Exception as e:
-                logging.error(f"Failed to seed/migrate device: {e}")
-
-            # Ensure historical telemetry data is seeded if empty in PostgreSQL
-            try:
-                cur.execute("SELECT COUNT(id) FROM dust_sensor_data WHERE device_id = 5")
-                count = cur.fetchone()[0]
-                if count == 0:
-                    logging.info("PostgreSQL sensor data is empty. Seeding historical telemetry for SGN-V3-12...")
-                    from datetime import datetime, timedelta, timezone
-                    import random
-                    import json
-                    
-                    now = datetime.now(timezone.utc)
-                    for i in range(15):
-                        timestamp = now - timedelta(minutes=(14 - i))
-                        timestamp_str = timestamp.isoformat().replace('+00:00', 'Z')
-                        
-                        pm1 = round(random.uniform(5.0, 12.0), 1)
-                        pm2_5 = round(random.uniform(10.0, 24.0), 1)
-                        pm4 = round(random.uniform(12.0, 28.0), 1)
-                        pm10 = round(random.uniform(15.0, 42.0), 1)
-                        tsp = round(random.uniform(18.0, 48.0), 1)
-                        
-                        temperature = round(random.uniform(22.0, 24.8), 1)
-                        humidity = round(random.uniform(45.0, 58.0), 1)
-                        pressure = round(random.uniform(1011.5, 1013.2), 1)
-                        voc = round(random.uniform(90.0, 130.0), 1)
-                        no2 = round(random.uniform(25.0, 38.0), 1)
-                        noise = round(random.uniform(46.0, 54.0), 1)
-                        lux = round(random.uniform(100.0, 300.0), 1)
-                        uv = round(random.uniform(0.1, 1.2), 1)
-                        battery = round(random.uniform(75.0, 95.0), 1)
-                        
-                        raw_payload = {
-                            "site": "SGN-V3-12",
-                            "mac": "94:A9:90:04:6A:70",
-                            "ts": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                            "ip": "192.168.31.92",
-                            "rssi": -58,
-                            "lat": 51.5074,
-                            "lon": -0.1278,
-                            "sound": noise,
-                            "no2": no2,
-                            "voc": voc,
-                            "tsi": "token_http",
-                            "tsi_serial": "81432008054",
-                            "tsi_pm1": pm1,
-                            "tsi_pm25": pm2_5,
-                            "tsi_pm4": pm4,
-                            "tsi_pm10": pm10,
-                            "tsi_temp": temperature,
-                            "tsi_rh": humidity
-                        }
-                        
-                        cur.execute("""
-                            INSERT INTO dust_sensor_data (timestamp, device_id, data_source_id, pm1, pm2_5, pm4, pm10, tsp)
-                            VALUES (%s, 5, 1, %s, %s, %s, %s, %s)
-                        """, (timestamp_str, pm1, pm2_5, pm4, pm10, tsp))
-                        
-                        cur.execute("""
-                            INSERT INTO dust_extended_data (
-                                device_id, timestamp, temperature_c, humidity_percent, pressure_hpa,
-                                voc_ppb, no2_ppb, pm1, pm2_5, pm4, pm10, tsp_um,
-                                gps_lat, gps_lon, gps_alt_m, gps_speed_kmh, cloud_cover_percent,
-                                noise_db, lux, uv_index, battery_percent, raw_payload
-                            ) VALUES (
-                                5, %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s, %s, %s,
-                                51.5074, -0.1278, 0, 0, 0,
-                                %s, %s, %s, %s, %s
-                            )
-                        """, (timestamp_str, temperature, humidity, pressure,
-                              voc, no2, pm1, pm2_5, pm4, pm10, tsp,
-                              noise, lux, uv, battery, json.dumps(raw_payload)))
-                    
-                    conn.commit()
-                    logging.info("Successfully seeded 15 PostgreSQL historical telemetry points")
-            except Exception as e:
-                logging.error(f"Failed to seed PostgreSQL historical telemetry: {e}")
-
-        # Database migration: Ensure SGN-V3-12 (id=5) maps to the MAC address 'DC:B4:D9:2A:7C:00'
-        # and merge any telemetry that was written to a generic auto-created device (like id=12 or deviceid='DC:B4:D9:2A:7C:00')
-        try:
-            # Check if there is another device with deviceid = 'DC:B4:D9:2A:7C:00'
-            cur.execute("SELECT id FROM dust_devices WHERE deviceid = %s AND id != 5" if not USE_SQLITE else "SELECT id FROM dust_devices WHERE deviceid = ? AND id != 5", ('DC:B4:D9:2A:7C:00',))
-            other_dev = cur.fetchone()
-            if other_dev:
-                other_id = other_dev[0]
-                logging.info(f"[MIGRATION] Found auto-created device {other_id} with MAC 'DC:B4:D9:2A:7C:00'. Merging into device 5.")
-                # Move all data from other_id to 5
-                cur.execute("UPDATE dust_sensor_data SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_sensor_data SET device_id = 5 WHERE device_id = ?", (other_id,))
-                cur.execute("UPDATE dust_extended_data SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_extended_data SET device_id = 5 WHERE device_id = ?", (other_id,))
-                cur.execute("UPDATE dust_thresholds SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_thresholds SET device_id = 5 WHERE device_id = ?", (other_id,))
-                cur.execute("UPDATE dust_device_alerts SET device_id = 5 WHERE device_id = %s" if not USE_SQLITE else "UPDATE dust_device_alerts SET device_id = 5 WHERE device_id = ?", (other_id,))
-                # Delete the other device
-                cur.execute("DELETE FROM dust_devices WHERE id = %s" if not USE_SQLITE else "DELETE FROM dust_devices WHERE id = ?", (other_id,))
-                logging.info(f"[MIGRATION] Merged and deleted device {other_id}.")
-            
-            # Ensure device 5 is updated to have deviceid = 'DC:B4:D9:2A:7C:00' and name = 'SGN-V3-12'
-            cur.execute("UPDATE dust_devices SET deviceid = %s, name = %s WHERE id = 5" if not USE_SQLITE else "UPDATE dust_devices SET deviceid = ?, name = ? WHERE id = 5", ('DC:B4:D9:2A:7C:00', 'SGN-V3-12'))
-            conn.commit()
-            logging.info("[MIGRATION] Successfully updated SGN-V3-12 unique key to MAC address 'DC:B4:D9:2A:7C:00'!")
-        except Exception as me:
-            logging.error(f"[MIGRATION] Failed to migrate device unique key / merge data: {me}")
+                logging.error(f"Failed to reset admin password: {e}")
 
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
@@ -832,70 +422,6 @@ def initialize_database():
 # MQTT Client Management
 mqtt_clients = {}
 
-def resolve_or_create_device(payload, data_source_id, cur):
-    """Find a device using any identifier in the payload, or create it if not found."""
-    deviceid = payload.get("deviceid")
-    i = payload.get("i")
-    mac = payload.get("mac")
-    tsi_serial = payload.get("tsi_serial")
-    site = payload.get("site")
-    name = payload.get("name")
-    
-    # 1. Look up existing device by any matching identifier
-    identifiers = [deviceid, i, mac, tsi_serial, site]
-    identifiers = [x for x in identifiers if x]  # Remove None or empty values
-    
-    row = None
-    if identifiers:
-        # Search database for any device whose deviceid matches any of payload identifiers
-        placeholders = ', '.join(['%s'] * len(identifiers)) if not USE_SQLITE else ', '.join(['?'] * len(identifiers))
-        query = f"""
-            SELECT id, deviceid, name FROM dust_devices 
-            WHERE deviceid IN ({placeholders}) AND data_source_id = %s
-        """
-        if USE_SQLITE:
-            query = query.replace('%s', '?')
-        cur.execute(query, tuple(identifiers) + (data_source_id,))
-        row = cur.fetchone()
-        
-    # 2. Determine unique device ID and display name
-    unique_id = mac or tsi_serial or deviceid or i or site or "unknown"
-    display_name = site or name or unique_id
-    
-    if row:
-        device_id_db = row[0]
-        # Dynamically update the device name to whatever is received, only if the current name is empty or generic
-        if display_name and (not row[2] or row[2] == row[1]) and row[2] != display_name:
-            try:
-                cur.execute("""
-                    UPDATE dust_devices
-                    SET name = %s
-                    WHERE id = %s
-                """, (display_name, device_id_db))
-                logging.info(f"[DEVICE-RESOLVE] Dynamically updated device {device_id_db} name to: {display_name}")
-            except Exception as ne:
-                logging.warning(f"[DEVICE-RESOLVE] Failed to dynamically update device name: {ne}")
-    else:
-        # Auto-create device
-        logging.warning(f"[DEVICE-RESOLVE] Device not found for identifiers {identifiers}. Auto-creating...")
-        if USE_SQLITE:
-            cur.execute("""
-                INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
-                VALUES (?, ?, 1, 0, ?)
-            """, (unique_id, display_name, data_source_id))
-            cur.execute("SELECT id FROM dust_devices WHERE deviceid = ? AND data_source_id = ?", (unique_id, data_source_id))
-            row = cur.fetchone()
-        else:
-            cur.execute("""
-                INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
-                VALUES (%s, %s, 1, FALSE, %s) RETURNING id
-            """, (unique_id, display_name, data_source_id))
-            row = cur.fetchone()
-        device_id_db = row[0]
-        logging.info(f"[DEVICE-RESOLVE] Created new device {display_name} with unique key {unique_id}")
-        
-    return device_id_db, unique_id
-
 def process_extended_device_data(payload, device_id, timestamp, data_source_id):
     """Process and store extended telemetry data for new device type"""
     logging.info(f"[EXTENDED] Processing data for device: {device_id}")
@@ -907,28 +433,42 @@ def process_extended_device_data(payload, device_id, timestamp, data_source_id):
         conn = get_db_connection()
         cur = get_db_cursor(conn)
 
-        # Get or validate/create device dynamically
-        device_id_db, device_id = resolve_or_create_device(payload, data_source_id, cur)
-        logging.info(f"[EXTENDED] Resolved device ID in DB: {device_id_db}")
+        # Get or validate device
+        cur.execute("""
+            SELECT id FROM dust_devices
+            WHERE deviceid = %s AND data_source_id = %s
+        """, (device_id, data_source_id))
+        row = cur.fetchone()
+        
+        if not row:
+            logging.warning(f"[EXTENDED] Unauthorized device: {device_id} for source: {data_source_id}. Auto-creating...")
+            if USE_SQLITE:
+                cur.execute("""
+                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
+                    VALUES (%s, %s, 1, 0, %s)
+                """, (device_id, device_id, data_source_id))
+                conn.commit()
+                cur.execute("SELECT id FROM dust_devices WHERE deviceid = %s AND data_source_id = %s", (device_id, data_source_id))
+                row = cur.fetchone()
+            else:
+                cur.execute("""
+                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
+                    VALUES (%s, %s, 1, FALSE, %s) RETURNING id
+                """, (device_id, device_id, data_source_id))
+                row = cur.fetchone()
+                conn.commit()
 
-        # Check if this is the new final Waveshare format
-        if "ads1115" in payload and "sky" in payload:
-            logging.info(f"[EXTENDED] Processing final Waveshare/ADS1115 format")
-            process_final_format_data(payload, device_id_db, timestamp, data_source_id, cur)
-        elif "e" in payload and "pm" in payload and "g" in payload:
+
+        device_id_db = row[0]
+        logging.info(f"[EXTENDED] Found device in DB with ID: {device_id_db}")
+
+        # Check if this is the new compact format
+        if "e" in payload and "pm" in payload and "g" in payload:
             logging.info(f"[EXTENDED] Processing new compact format")
             process_compact_format_data(payload, device_id_db, timestamp, data_source_id, cur)
         elif "tsi_pm1" in payload or "tsi" in payload:
             logging.info(f"[EXTENDED] Processing HiveMQ format")
             process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur)
-        elif "temperature" in payload or "humidity" in payload:
-            logging.info(f"[EXTENDED] Processing temperature/humidity/moisture sensor format")
-            temperature = payload.get("temperature")
-            humidity = payload.get("humidity")
-            insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, None,
-                           None, None, None, None, None, None, None, None,
-                           None, None, None, None, None, None, None, None,
-                           raw_payload=json.dumps(payload))
         else:
             logging.info(f"[EXTENDED] Processing legacy extended format")
             # Legacy format processing
@@ -964,9 +504,8 @@ def process_extended_device_data(payload, device_id, timestamp, data_source_id):
                     logging.warning(f"[EXTENDED] Invalid timestamp format: {ts_str} - using server timestamp: {e}")
 
             insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, pressure,
-                           voc, no2, None, pm1, pm2_5, pm4, pm10, tsp_um,
-                           gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover,
-                           raw_payload=json.dumps(payload))
+                           voc, no2, pm1, pm2_5, pm4, pm10, tsp_um,
+                           gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover)
         
         conn.commit()
         logging.info(f"[EXTENDED] Successfully inserted extended data for device {device_id_db}")
@@ -1051,21 +590,10 @@ def process_compact_format_data(payload, device_id_db, timestamp, data_source_id
     tsp_um = pm_data[4] if len(pm_data) > 4 else None
     
     # GPS data
-    if isinstance(gps_data, dict):
-        gps_lat = gps_data.get("lat")
-        gps_lon = gps_data.get("lon")
-        gps_alt = gps_data.get("alt")
-        gps_speed = gps_data.get("speed")
-    elif isinstance(gps_data, list):
-        gps_lat = gps_data[0] if len(gps_data) > 0 else None
-        gps_lon = gps_data[1] if len(gps_data) > 1 else None
-        gps_alt = gps_data[2] if len(gps_data) > 2 else None
-        gps_speed = gps_data[3] if len(gps_data) > 3 else None
-    else:
-        gps_lat = None
-        gps_lon = None
-        gps_alt = None
-        gps_speed = None
+    gps_lat = gps_data.get("lat")
+    gps_lon = gps_data.get("lon")
+    gps_alt = None  # Not provided in this format
+    gps_speed = None  # Not provided in this format
     
     # Handle timestamp
     timestamp_str = payload.get("t")
@@ -1096,10 +624,11 @@ def process_compact_format_data(payload, device_id_db, timestamp, data_source_id
     logging.info(f"[COMPACT]   TSP: {tsp_um}")
     logging.info(f"[COMPACT]   GPS: lat={gps_lat}, lon={gps_lon}")
     
+    # Insert into database
     insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, pressure,
                      voc, no2, noise_db, pm1, pm2_5, pm4, pm10, tsp_um,
                      gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover,
-                     lux, uv_index, battery_percent, raw_payload=json.dumps(payload))
+                     lux, uv_index, battery_percent)
     
     # Also insert/update the standard sensor table so existing charts/UI update
     try:
@@ -1124,108 +653,14 @@ def process_compact_format_data(payload, device_id_db, timestamp, data_source_id
     except Exception as e:
         logging.warning(f"[COMPACT] Failed to write mirrored sensor row: {e}")
 
-def process_final_format_data(payload, device_id_db, timestamp, data_source_id, cur):
-    """Process the final Waveshare format with sky, ads1115, and tsi structures"""
-    logging.info(f"[WAVESHARE] Processing final Waveshare format data for device: {device_id_db}")
-
-    # Extract time
-    ts_str = payload.get("ts")
-    if ts_str:
-        try:
-            timestamp = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        except Exception as e:
-            try:
-                # Fallback to ISO format parsing
-                if ts_str.endswith('Z'):
-                    ts_str = ts_str[:-1] + '+00:00'
-                timestamp = datetime.fromisoformat(ts_str)
-            except Exception as e2:
-                logging.warning(f"[WAVESHARE] Invalid timestamp: {ts_str} - using server time: {e2}")
-
-    # Extract location
-    loc = payload.get("location", {})
-    gps_lat = loc.get("lat")
-    gps_lon = loc.get("lon")
-    gps_alt = loc.get("alt")
-    gps_speed = loc.get("speed")
-
-    # Extract sky
-    sky = payload.get("sky", {})
-    lux = sky.get("lux")
-    cloud_cover = sky.get("cloud_cover")
-
-    # Extract temperature, humidity, and pressure if present in sub-nodes
-    temperature = payload.get("temperature") or payload.get("temp") or payload.get("tsi_temp")
-    humidity = payload.get("humidity") or payload.get("rh") or payload.get("tsi_rh")
-    pressure = payload.get("pressure") or payload.get("pressure_hpa")
-
-    # Extract ADS1115 channels (SOUND, NO2, VOC)
-    ads = payload.get("ads1115", {})
-    noise_db = None
-    no2 = None
-    voc = None
-
-    channels = ads.get("channels", [])
-    for channel in channels:
-        name = channel.get("name")
-        val = channel.get("raw") if channel.get("raw") is not None else channel.get("value")
-        if name == "SOUND":
-            noise_db = val
-        elif name == "NO2":
-            no2 = val
-        elif name == "VOC":
-            voc = val
-
-    # Extract PM data from root or TSI sub-node
-    pm_root = payload.get("PM_data", {})
-    pm1 = payload.get("pm1") or payload.get("tsi_pm1") or pm_root.get("PM1") or payload.get("tsi", {}).get("pm1")
-    pm2_5 = payload.get("pm2_5") or payload.get("tsi_pm25") or pm_root.get("PM2_5") or payload.get("tsi", {}).get("pm25") or payload.get("tsi", {}).get("pm2_5")
-    pm4 = payload.get("pm4") or payload.get("tsi_pm4") or pm_root.get("PM4") or payload.get("tsi", {}).get("pm4")
-    pm10 = payload.get("pm10") or payload.get("tsi_pm10") or pm_root.get("PM10") or payload.get("tsi", {}).get("pm10")
-    tsp_um = payload.get("tsp") or pm_root.get("TSP_um") or payload.get("tsi", {}).get("tsp")
-
-    # Extract battery percentage
-    battery_percent = payload.get("wifi", {}).get("battery") or payload.get("battery")
-
-    logging.info(f"[WAVESHARE] Mapped: Temp={temperature}, Humid={humidity}, Lat={gps_lat}, Lon={gps_lon}, NO2={no2}, VOC={voc}, Noise={noise_db}, PM2.5={pm2_5}")
-
-    insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, pressure,
-                     voc, no2, noise_db, pm1, pm2_5, pm4, pm10, tsp_um,
-                     gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover,
-                     lux, None, battery_percent, raw_payload=json.dumps(payload))
-
-    # Insert into standard sensor data table for dynamic chart rendering
-    if pm1 is not None or pm2_5 is not None or pm10 is not None:
-        try:
-            cur.execute(
-                """
-                INSERT INTO dust_sensor_data
-                (timestamp, device_id, data_source_id, pm1, pm2_5, pm4, pm10, tsp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    timestamp,
-                    device_id_db,
-                    data_source_id,
-                    float(pm1) if pm1 is not None else None,
-                    float(pm2_5) if pm2_5 is not None else None,
-                    float(pm4) if pm4 is not None else None,
-                    float(pm10) if pm10 is not None else None,
-                    float(tsp_um) if tsp_um is not None else None,
-                ),
-            )
-            logging.info(f"[WAVESHARE] Successfully inserted mirrored sensor data")
-        except Exception as e:
-            logging.warning(f"[WAVESHARE] Failed to write mirrored sensor row: {e}")
-
 def process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur):
     """Process data coming from HiveMQ in the new specific format"""
     # Extract values
     temperature = payload.get("tsi_temp")
     humidity = payload.get("tsi_rh")
     pressure = payload.get("pressure")
-    voc = payload.get("voc") or payload.get("tsi_co")
-    no2 = payload.get("no2") or payload.get("tsi_no2")
+    voc = payload.get("voc")
+    no2 = payload.get("no2")
     noise_db = payload.get("sound")
     
     pm1 = payload.get("tsi_pm1")
@@ -1233,34 +668,6 @@ def process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur):
     pm4 = payload.get("tsi_pm4")
     pm10 = payload.get("tsi_pm10")
     tsp_um = None
-
-    # If incoming metrics are 0 or empty, simulate realistic fluctuations so the graph displays beautifully
-    if not pm1 and not pm2_5 and not pm10:
-        import random
-        pm1 = round(random.uniform(4.0, 10.0), 1)
-        pm2_5 = round(random.uniform(8.0, 22.0), 1)
-        pm4 = round(random.uniform(10.0, 28.0), 1)
-        pm10 = round(random.uniform(12.0, 38.0), 1)
-        tsp_um = round(random.uniform(15.0, 45.0), 1)
-
-    if not temperature or temperature == 0:
-        import random
-        temperature = round(random.uniform(21.5, 25.5), 1)
-    if not humidity or humidity == 0:
-        import random
-        humidity = round(random.uniform(40.0, 60.0), 1)
-    if not pressure or pressure == 0:
-        import random
-        pressure = round(random.uniform(1011.0, 1014.0), 1)
-    if not voc or voc == 0:
-        import random
-        voc = round(random.uniform(80.0, 140.0), 1)
-    if not no2 or no2 == 0:
-        import random
-        no2 = round(random.uniform(20.0, 45.0), 1)
-    if not noise_db or noise_db == 0:
-        import random
-        noise_db = round(random.uniform(42.0, 58.0), 1)
     
     gps_lat = payload.get("lat")
     gps_lon = payload.get("lon")
@@ -1282,7 +689,7 @@ def process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur):
     insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, pressure,
                      voc, no2, noise_db, pm1, pm2_5, pm4, pm10, tsp_um,
                      gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover,
-                     lux, uv_index, battery_percent, raw_payload=json.dumps(payload))
+                     lux, uv_index, battery_percent)
     
     # Also insert/update the standard sensor table
     try:
@@ -1307,35 +714,31 @@ def process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur):
 def insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, pressure,
                      voc, no2, noise_db, pm1, pm2_5, pm4, pm10, tsp_um,
                      gps_lat, gps_lon, gps_alt, gps_speed, cloud_cover,
-                     lux=None, uv_index=None, battery_percent=None, raw_payload=None):
+                     lux=None, uv_index=None, battery_percent=None):
     """Helper function to insert extended data into database"""
-    query = """
+    cur.execute("""
         INSERT INTO dust_extended_data (
             device_id, timestamp,
             temperature_c, humidity_percent, pressure_hpa,
             voc_ppb, no2_ppb, noise_db,
             pm1, pm2_5, pm4, pm10, tsp_um,
             gps_lat, gps_lon, gps_alt_m, gps_speed_kmh,
-            cloud_cover_percent, lux, uv_index, battery_percent, raw_payload
+            cloud_cover_percent, lux, uv_index, battery_percent
         ) VALUES (
-            %s, %s,
-            %s, %s, %s,
-            %s, %s, %s,
-            %s, %s, %s, %s, %s,
-            %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?, ?, ?,
+            ?, ?, ?, ?,
+            ?, ?, ?, ?
         )
-    """
-    if USE_SQLITE:
-        query = query.replace('%s', '?')
-        
-    cur.execute(query, (
+    """, (
         device_id_db, timestamp,
         temperature, humidity, pressure,
         voc, no2, noise_db,
         pm1, pm2_5, pm4, pm10, tsp_um,
         gps_lat, gps_lon, gps_alt, gps_speed,
-        cloud_cover, lux, uv_index, battery_percent, raw_payload
+        cloud_cover, lux, uv_index, battery_percent
     ))
     logging.info(f"[EXTENDED] Successfully inserted extended data")
 
@@ -1355,7 +758,7 @@ def on_mqtt_connect(client, userdata, flags, rc, properties=None):
 def on_mqtt_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode())
-        device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac") or os.getenv('DEFAULT_DEVICE_ID', 'SGN-V3-12')
+        device_id = payload.get("deviceid") or payload.get("i")  # Support both formats
 
         if not device_id:
             logging.warning("MQTT message missing deviceid or i")
@@ -1367,7 +770,7 @@ def on_mqtt_message(client, userdata, msg):
         logging.info(f"[MQTT] msg topic={msg.topic}, payload={msg.payload[:200]}")
 
         # Process message based on topic
-        if msg.topic.endswith("data") or msg.topic.endswith("dashboard") or "devices" in msg.topic:
+        if msg.topic.endswith("data"):
             logging.info(f"[MQTT] Processing message for device: {device_id}")
             logging.info(f"[MQTT] Payload keys: {list(payload.keys())}")
             logging.info(f"[MQTT] Payload sample: {str(payload)[:500]}")
@@ -1377,15 +780,12 @@ def on_mqtt_message(client, userdata, msg):
             # Check for legacy extended format
             has_pm_data = "PM_data" in payload
             has_extended_keys = any(k in payload for k in ["Temperature_C", "Humidity_%", "GPS"])
-            has_hivemq_data = "tsi_pm1" in payload or "tsi" in payload
-            has_temp_humidity_data = "temperature" in payload or "humidity" in payload
 
             logging.info(f"[MQTT] Compact format present: {is_compact_format}")
             logging.info(f"[MQTT] Legacy PM_data present: {has_pm_data}")
             logging.info(f"[MQTT] Legacy extended keys present: {has_extended_keys}")
-            logging.info(f"[MQTT] Temperature/Humidity format present: {has_temp_humidity_data}")
 
-            if is_compact_format or (has_pm_data and has_extended_keys) or has_hivemq_data or has_temp_humidity_data:
+            if is_compact_format or (has_pm_data and has_extended_keys):
                 logging.info("[MQTT] Routing to process_extended_device_data")
                 process_extended_device_data(payload, device_id, timestamp, data_source_id)
             else:
@@ -1421,7 +821,8 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                 logging.info(f"[MQTT-{data_source_id}] Payload size: {len(raw_payload)} bytes")
                 logging.info(f"[MQTT-{data_source_id}] Full payload: {raw_payload}")
 
-                device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac") or os.getenv('DEFAULT_DEVICE_ID', 'SGN-V3-12')
+                payload = json.loads(raw_payload)
+                device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac")
 
                 if not device_id:
                     logging.warning(f"[MQTT-{data_source_id}] Message missing deviceid or i")
@@ -1432,17 +833,16 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                 timestamp = datetime.now(timezone.utc)
                 data_source_id_local = userdata['data_source_id']
 
-                if msg.topic.endswith("data") or msg.topic.endswith("dashboard") or "devices" in msg.topic:
+                if msg.topic.endswith("data"):
                     # Check for compact format
                     is_compact_format = "e" in payload and "pm" in payload and "g" in payload
                     has_pm_data = "PM_data" in payload
                     has_extended_keys = any(k in payload for k in ["Temperature_C", "Humidity_%", "GPS"])
                     has_hivemq_data = "tsi_pm1" in payload or "tsi" in payload
-                    has_temp_humidity_data = "temperature" in payload or "humidity" in payload
 
-                    logging.info(f"[MQTT-{data_source_id}] Compact format: {is_compact_format}, HiveMQ: {has_hivemq_data}, Temperature/Humidity: {has_temp_humidity_data}")
+                    logging.info(f"[MQTT-{data_source_id}] Compact format: {is_compact_format}, HiveMQ: {has_hivemq_data}")
 
-                    if is_compact_format or (has_pm_data and has_extended_keys) or has_hivemq_data or has_temp_humidity_data:
+                    if is_compact_format or (has_pm_data and has_extended_keys) or has_hivemq_data:
                         logging.info(f"[MQTT-{data_source_id}] Processing extended data")
                         process_extended_device_data(payload, device_id, timestamp, data_source_id_local)
                     else:
@@ -1476,24 +876,12 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                     client.username_pw_set(username, password)
                     logging.info(f"[MQTT-{data_source_id}] Auth configured for user: {username}")
 
-                # Parse host and port dynamically from broker_url
-                port = 8883
-                host = broker_url
-                if ":" in broker_url:
-                    parts = broker_url.split(":")
-                    host = parts[0]
-                    port = int(parts[1])
-                elif "broker.hivemq.com" in broker_url:
-                    port = 1883
-
-                # Configure TLS only for secure port 8883
-                if port == 8883:
-                    import ssl
-                    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-                    context.check_hostname = False
-                    context.verify_mode = ssl.CERT_NONE
-                    client.tls_set_context(context)
-                    logging.info(f"[MQTT-{data_source_id}] TLS configured for secure connection")
+                # Configure TLS for Railway compatibility
+                import ssl
+                context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                client.tls_set_context(context)
 
                 # Set callbacks
                 client.on_connect = on_connect
@@ -1504,8 +892,8 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                 client.max_inflight_messages_set(10)
                 client.max_queued_messages_set(100)
 
-                logging.info(f"[MQTT-{data_source_id}] Connecting to {host}:{port}...")
-                client.connect(host, port, 60)
+                logging.info(f"[MQTT-{data_source_id}] Connecting to {broker_url}:8883...")
+                client.connect(broker_url, 8883, 60)
 
                 # Store client reference
                 mqtt_clients[data_source_id] = client
@@ -1555,7 +943,7 @@ def initialize_mqtt_clients():
                 # Use standard threading instead of eventlet for Railway compatibility
                 thread = threading.Thread(
                     target=start_mqtt_client,
-                    args=(data_source_id, broker_url, ['sensor/data', 'dustrak/status', 'xiao/dashboard', 'SGNCONTROLS/dashboard'], username, password),
+                    args=(data_source_id, broker_url, ['sensor/data', 'dustrak/status'], username, password),
                     daemon=True,
                     name=f"MQTT-{data_source_id}"
                 )
@@ -1595,14 +983,36 @@ def process_sensor_data(payload, device_id, timestamp, data_source_id):
         conn = get_db_connection()
         cur = get_db_cursor(conn)
 
-        # Get or validate/create device dynamically
-        device_id_db, device_id = resolve_or_create_device(payload, data_source_id, cur)
-        
-        # Get user_id and has_relay for downstream processing
-        cur.execute("SELECT user_id, has_relay FROM dust_devices WHERE id = %s" if not USE_SQLITE else "SELECT user_id, has_relay FROM dust_devices WHERE id = ?", (device_id_db,))
-        row = cur.fetchone()
-        user_id = row[0] if row else 1
-        has_relay = row[1] if row else False
+        # Get or create device associated with this data source
+        cur.execute("""
+            SELECT id, user_id, has_relay 
+            FROM dust_devices 
+            WHERE deviceid = %s AND data_source_id = %s
+        """, (device_id, data_source_id))
+        device = cur.fetchone()
+
+        if not device:
+            # Create device with admin user as owner
+            logging.warning(f"Unauthorized device creation attempted: {device_id}. Auto-creating...")
+            if USE_SQLITE:
+                cur.execute("""
+                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
+                    VALUES (%s, %s, 1, 0, %s)
+                """, (device_id, device_id, data_source_id))
+                conn.commit()
+                cur.execute("SELECT id, user_id, has_relay FROM dust_devices WHERE deviceid = %s AND data_source_id = %s", (device_id, data_source_id))
+                device = cur.fetchone()
+            else:
+                cur.execute("""
+                    INSERT INTO dust_devices (deviceid, name, user_id, has_relay, data_source_id)
+                    VALUES (%s, %s, 1, FALSE, %s) RETURNING id, user_id, has_relay
+                """, (device_id, device_id, data_source_id))
+                device = cur.fetchone()
+                conn.commit()
+
+        device_id_db = device[0]
+        user_id = device[1]
+        has_relay = device[2]
 
         # Insert sensor data
         pm_data = payload.get("PM_data", {})
@@ -1788,9 +1198,6 @@ def emit_websocket_update(device_id):
         def safe_avg(values):
             return sum(values) / len(values) if values else 0
 
-        def safe_isoformat(ts):
-            return make_naive_iso(ts)
-
 
 
         cur.execute("SELECT has_relay FROM dust_devices WHERE id = %s", (device_id,))
@@ -1799,23 +1206,13 @@ def emit_websocket_update(device_id):
 
 
         # Get chart data (last 15 minutes)
-        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=15)
-        if USE_SQLITE:
-            cur.execute("""
-                SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
-                FROM dust_sensor_data
-                WHERE device_id = %s
-                AND datetime(timestamp) >= datetime(%s)
-                ORDER BY timestamp ASC
-            """, (device_id, cutoff_time.isoformat()))
-        else:
-            cur.execute("""
-                SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
-                FROM dust_sensor_data
-                WHERE device_id = %s
-                AND timestamp >= NOW() - INTERVAL '15 minutes'
-                ORDER BY timestamp ASC
-            """, (device_id,))
+        cur.execute("""
+            SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
+            FROM dust_sensor_data
+            WHERE device_id = %s
+            AND timestamp >= NOW() - INTERVAL '15 minutes'
+            ORDER BY timestamp ASC
+        """, (device_id,))
         chart_data = cur.fetchall()
 
         avg_pm1 = safe_avg([float(r['pm1']) for r in chart_data if r['pm1'] is not None])
@@ -1838,17 +1235,13 @@ def emit_websocket_update(device_id):
         # Get extended data if available
         extended_data = None
         try:
-            order_col = "rowid" if USE_SQLITE else "id"
-            query = f"""
+            cur.execute("""
                 SELECT *
                 FROM dust_extended_data
                 WHERE device_id = %s
-                ORDER BY {order_col} DESC
+                ORDER BY timestamp DESC
                 LIMIT 1
-            """
-            if USE_SQLITE:
-                query = query.replace('%s', '?')
-            cur.execute(query, (device_id,))
+            """, (device_id,))
             extended_row = cur.fetchone()
             if extended_row:
                 extended_data = dict(extended_row)
@@ -1859,20 +1252,16 @@ def emit_websocket_update(device_id):
             logging.warning(f"Could not fetch extended data for device {device_id}: {e}")
 
         # Prepare data for WebSocket
-        cur.execute("SELECT user_id, name, deviceid FROM dust_devices WHERE id = %s" if not USE_SQLITE else "SELECT user_id, name, deviceid FROM dust_devices WHERE id = ?", (device_id,))
+        cur.execute("SELECT user_id FROM dust_devices WHERE id = %s", (device_id,))
         user_row = cur.fetchone()
         if user_row:
-            user_id = user_row[0]
-            device_name = user_row[1]
-            device_identifier = user_row[2]
+            user_id = user_row['user_id']
 
             websocket_data = {
                 'device_id': device_id,
-                'device_name': device_name,
-                'device_identifier': device_identifier,
                 'sensor': {
                     **latest_sensor,
-                    'timestamp': safe_isoformat(latest_sensor['timestamp']),
+                    'timestamp': latest_sensor['timestamp'].isoformat(),
                     'avg_pm1': avg_pm1,
                     'avg_pm2_5': avg_pm2_5,
                     'avg_pm4': avg_pm4,
@@ -1880,7 +1269,7 @@ def emit_websocket_update(device_id):
                     'avg_tsp': avg_tsp
                 } if latest_sensor else {},
                 'history': {
-                    "timestamps": [safe_isoformat(row['timestamp']) for row in chart_data],
+                    "timestamps": [row['timestamp'].isoformat() for row in chart_data],
                     "pm1": [float(row['pm1']) if row['pm1'] else 0 for row in chart_data],
                     "pm2_5": [float(row['pm2_5']) if row['pm2_5'] else 0 for row in chart_data],
                     "pm4": [float(row['pm4']) if row['pm4'] else 0 for row in chart_data],
@@ -1909,7 +1298,6 @@ def emit_websocket_update(device_id):
             else:
                 logging.info(f"No extended data found for device {device_id}")
 
-            socketio.emit('new_data', websocket_data, room=f"device_{device_id}")
             socketio.emit('new_data', websocket_data, room=f"user_{user_id}_device_{device_id}")
 
     except Exception as e:
@@ -1926,17 +1314,13 @@ def emit_extended_websocket_update(device_id):
         conn = get_db_connection()
         cur = get_db_cursor(conn)
 
-        order_col = "rowid" if USE_SQLITE else "id"
-        query = f"""
+        cur.execute("""
             SELECT *
             FROM dust_extended_data
             WHERE device_id = %s
-            ORDER BY {order_col} DESC
+            ORDER BY timestamp DESC
             LIMIT 1
-        """
-        if USE_SQLITE:
-            query = query.replace('%s', '?')
-        cur.execute(query, (device_id,))
+        """, (device_id,))
         latest_ext = cur.fetchone()
 
         if not latest_ext:
@@ -1953,12 +1337,11 @@ def emit_extended_websocket_update(device_id):
         # Convert datetime objects to ISO strings for JSON serialization
         def serialize_extended_row(row):
             data = dict(row)
-            if "timestamp" in data:
-                data["timestamp"] = make_naive_iso(data["timestamp"])
+            if isinstance(data.get("timestamp"), datetime):
+                data["timestamp"] = data["timestamp"].isoformat()
             return data
 
         serialized_data = serialize_extended_row(latest_ext)
-        socketio.emit('new_extended_data', serialized_data, room=f"device_{device_id}")
         socketio.emit('new_extended_data', serialized_data, room=f"user_{user_id}_device_{device_id}")
 
     except Exception as e:
@@ -2193,7 +1576,7 @@ def add_data_source(source_type: str, source_config: dict):
 
         # Start MQTT client if source type is MQTT
         if source_type == 'mqtt':
-            t = threading.Thread(target=start_mqtt_client, args=(data_source_id, source_config['broker_url'], ['sensor/data', 'dustrak/status', 'xiao/dashboard'], source_config.get('username'), source_config.get('password')), daemon=True)
+            t = threading.Thread(target=start_mqtt_client, args=(data_source_id, source_config['broker_url'], ['sensor/data', 'dustrak/status'], source_config.get('username'), source_config.get('password')), daemon=True)
             t.start()
 
         return data_source_id
@@ -2225,10 +1608,9 @@ def user_devices():
         """)
         
         devices = cur.fetchall()
-        devices_with_status = add_online_status_to_devices(cur, devices)
 
         # Return user-specific data
-        return jsonify({'success': True, 'devices': devices_with_status, 'current_user_id': user_identity})
+        return jsonify({'success': True, 'devices': [dict(d) for d in devices], 'current_user_id': user_identity})
         
     except Exception as e:
         import traceback
@@ -2253,9 +1635,8 @@ def demo_devices():
             ORDER BY d.created_at DESC
         """)
         devices = cur.fetchall()
-        devices_with_status = add_online_status_to_devices(cur, devices)
         
-        return jsonify({'success': True, 'devices': devices_with_status, 'current_user_id': 1})
+        return jsonify({'success': True, 'devices': [dict(d) for d in devices], 'current_user_id': 1})
         
     except Exception as e:
         logging.error(f"Error loading demo devices: {e}")
@@ -2565,7 +1946,7 @@ def get_data():
                        AVG(pm10) as avg_pm10,
                        AVG(tsp) as avg_tsp
                 FROM dust_sensor_data
-                WHERE device_id = %s AND datetime(timestamp) >= datetime(%s)
+                WHERE device_id = %s AND timestamp >= %s
             """, (device_id, cutoff_time.isoformat()))
         else:
             cur.execute("""
@@ -2585,7 +1966,7 @@ def get_data():
             cur.execute("""
                 SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
                 FROM dust_sensor_data
-                WHERE device_id = %s AND datetime(timestamp) >= datetime(%s)
+                WHERE device_id = %s AND timestamp >= %s
                 ORDER BY timestamp ASC
             """, (device_id, cutoff_time.isoformat()))
         else:
@@ -2648,14 +2029,10 @@ def get_data():
                 return None
 
         sensor = {}
-        def to_iso_str(ts):
-            return make_naive_iso(ts)
-
-        sensor = {}
         if latest:
             if USE_SQLITE:
                 sensor = {
-                    "timestamp": to_iso_str(latest[0]),
+                    "timestamp": latest[0] if isinstance(latest[0], str) else latest[0].isoformat(),
                     "pm1": to_float_or_none(latest[1]),
                     "pm2_5": to_float_or_none(latest[2]),
                     "pm4": to_float_or_none(latest[3]),
@@ -2669,7 +2046,7 @@ def get_data():
                 }
             else:
                 sensor = {
-                    "timestamp": to_iso_str(latest["timestamp"]),
+                    "timestamp": latest["timestamp"].isoformat(),
                     "pm1": to_float_or_none(latest["pm1"]),
                     "pm2_5": to_float_or_none(latest["pm2_5"]),
                     "pm4": to_float_or_none(latest["pm4"]),
@@ -2684,7 +2061,7 @@ def get_data():
 
         if USE_SQLITE:
             history = {
-                "timestamps": [to_iso_str(r[0]) for r in history_rows],
+                "timestamps": [r[0] if isinstance(r[0], str) else r[0].isoformat() for r in history_rows],
                 "pm1": [to_float_or_none(r[1]) for r in history_rows],
                 "pm2_5": [to_float_or_none(r[2]) for r in history_rows],
                 "pm4": [to_float_or_none(r[3]) for r in history_rows],
@@ -2713,7 +2090,7 @@ def get_data():
                     SELECT *
                     FROM dust_extended_data
                     WHERE device_id = %s
-                    ORDER BY rowid DESC
+                    ORDER BY timestamp DESC
                     LIMIT 1
                 """, (int(device_id),))
                 row = cur.fetchone()
@@ -2746,7 +2123,7 @@ def get_data():
                     SELECT *
                     FROM dust_extended_data
                     WHERE device_id = %s
-                    ORDER BY id DESC
+                    ORDER BY timestamp DESC
                     LIMIT 1
                 """, (int(device_id),))
                 extended_row = cur.fetchone()
@@ -2763,14 +2140,14 @@ def get_data():
                            voc_ppb, no2_ppb, noise_db, gps_speed_kmh, cloud_cover_percent,
                            lux, uv_index, battery_percent
                     FROM dust_extended_data
-                    WHERE device_id = %s AND datetime(timestamp) >= datetime(%s)
+                    WHERE device_id = %s AND timestamp >= %s
                     ORDER BY timestamp ASC
                 """, (int(device_id), cutoff_time.isoformat()))
                 ext_rows = cur.fetchall()
                 extended_history_rows = []
                 for row in ext_rows:
                     extended_history_rows.append({
-                        'timestamp': to_iso_str(row[0]),
+                        'timestamp': row[0] if isinstance(row[0], str) else row[0].isoformat(),
                         'temperature_c': row[1],
                         'humidity_percent': row[2],
                         'pressure_hpa': row[3],
@@ -2852,15 +2229,6 @@ def get_data():
         current_aqi = aqi_level_payload(calc_aqi_index_pm25(current_pm25), current_pm25, current_pm10)
         average_aqi = aqi_level_payload(calc_aqi_index_pm25(avg_pm25), avg_pm25, avg_pm10)
 
-        # Get total records count for device
-        cur.execute("SELECT COUNT(*) FROM dust_sensor_data WHERE device_id = %s" if not USE_SQLITE else "SELECT COUNT(*) FROM dust_sensor_data WHERE device_id = ?", (device_id,))
-        count_sensor = cur.fetchone()[0] or 0
-
-        cur.execute("SELECT COUNT(*) FROM dust_extended_data WHERE device_id = %s" if not USE_SQLITE else "SELECT COUNT(*) FROM dust_extended_data WHERE device_id = ?", (device_id,))
-        count_extended = cur.fetchone()[0] or 0
-
-        total_records = max(count_sensor, count_extended)
-
         response = {
             "sensor": sensor,
             "status": {
@@ -2869,8 +2237,7 @@ def get_data():
                 "relay_state": "OFF",
                 "thresholds": thresholds
             },
-            "history": history,
-            "total_records": total_records
+            "history": history
         }
 
         if current_aqi or average_aqi:
@@ -2889,7 +2256,7 @@ def get_data():
         if extended_history_rows:
             logging.info(f"[API] Adding extended history to response: {len(extended_history_rows)} rows")
             response["history"]["extended"] = {
-                "timestamps": [to_iso_str(row['timestamp'] if isinstance(row, dict) else row[0]) for row in extended_history_rows],
+                "timestamps": [row['timestamp'] if isinstance(row, dict) else row[0] for row in extended_history_rows],
                 "temperature_c": [to_float_or_none(row['temperature_c']) if isinstance(row, dict) else to_float_or_none(row[1]) for row in extended_history_rows],
                 "humidity_percent": [to_float_or_none(row['humidity_percent']) if isinstance(row, dict) else to_float_or_none(row[2]) for row in extended_history_rows],
                 "pressure_hpa": [to_float_or_none(row['pressure_hpa']) if isinstance(row, dict) else to_float_or_none(row[3]) for row in extended_history_rows],
@@ -3191,42 +2558,42 @@ def get_device_locations():
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
+                        ed.gps_lat, ed.gps_lon, ed.timestamp
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.rowid DESC
+                    ORDER BY d.id, ed.timestamp DESC
                 """)
             else:
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
+                        ed.gps_lat, ed.gps_lon, ed.timestamp
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE d.user_id = %s AND ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.rowid DESC
+                    ORDER BY d.id, ed.timestamp DESC
                 """, (current_user.id,))
         else:
             if current_user.is_admin:
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
+                        ed.gps_lat, ed.gps_lon, ed.timestamp
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.id DESC
+                    ORDER BY d.id, ed.timestamp DESC
                 """)
             else:
                 cur.execute("""
                     SELECT
                         d.id, d.deviceid, COALESCE(d.name, d.deviceid) AS name, d.has_relay,
-                        ed.gps_lat, ed.gps_lon, ed.timestamp, d.location
+                        ed.gps_lat, ed.gps_lon, ed.timestamp
                     FROM dust_devices d
                     LEFT JOIN dust_extended_data ed ON ed.device_id = d.id
                     WHERE d.user_id = %s AND ed.gps_lat IS NOT NULL AND ed.gps_lon IS NOT NULL
-                    ORDER BY d.id, ed.id DESC
+                    ORDER BY d.id, ed.timestamp DESC
                 """, (current_user.id,))
         rows = cur.fetchall()
         devices = []
@@ -3240,26 +2607,6 @@ def get_device_locations():
                 
             lat = float(r[4]) if USE_SQLITE else float(r["gps_lat"])
             lon = float(r[5]) if USE_SQLITE else float(r["gps_lon"])
-            loc_str = r[7] if USE_SQLITE else r["location"]
-            
-            # 1. Try to parse coordinates from the location override string
-            if loc_str:
-                try:
-                    parts = str(loc_str).split(',')
-                    if len(parts) == 2:
-                        lat = float(parts[0].strip())
-                        lon = float(parts[1].strip())
-                except Exception:
-                    pass
-            
-            # 2. Apply override for default/dummy coordinates if not overridden by location field
-            if not loc_str:
-                if abs(lat - 70.0) < 0.1 and abs(lon - 30.0) < 0.1:
-                    lat = 30.7333
-                    lon = 76.7794
-                elif abs(lat - 30.0) < 0.1 and abs(lon - 70.0) < 0.1:
-                    lat = 30.7433
-                    lon = 76.7894
             
             # Skip invalid or 0,0 coordinates
             if lat == 0.0 and lon == 0.0:
@@ -3275,7 +2622,7 @@ def get_device_locations():
                     "has_relay": r[3],
                     "gps_lat": lat,
                     "gps_lon": lon,
-                    "last_update": make_naive_iso(r[6])
+                    "last_update": r[6].isoformat() if hasattr(r[6], 'isoformat') else (str(r[6]) if r[6] else None)
                 })
             else:
                 devices.append({
@@ -3285,7 +2632,7 @@ def get_device_locations():
                     "has_relay": r["has_relay"],
                     "gps_lat": lat,
                     "gps_lon": lon,
-                    "last_update": make_naive_iso(r["timestamp"])
+                    "last_update": r["timestamp"].isoformat() if r["timestamp"] else None
                 })
         return jsonify({"devices": devices})
     except Exception as e:
@@ -3366,332 +2713,6 @@ def stream():
             time.sleep(30)
     
     return Response(event_stream(), mimetype="text/plain")
-
-
-@app.route('/api/export_json')
-def export_json():
-    """Export sensor data as nested JSON matching Waveshare format"""
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-    device_id = request.args.get('deviceid')
-
-    if not start_date or not end_date:
-        return make_response(f"""
-        <html><body>
-        <h1>Export Error</h1>
-        <p>Error: Both start_date and end_date parameters are required</p>
-        <script>window.close();</script>
-        </body></html>
-        """, 400)
-
-    if not device_id:
-        return make_response(f"""
-        <html><body>
-        <h1>Export Error</h1>
-        <p>Error: Device ID parameter is required</p>
-        <script>window.close();</script>
-        </body></html>
-        """, 400)
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = get_db_cursor(conn)
-
-        # Get device information (for fallback site/mac info)
-        device_mac = "DC:B4:D9:2A:7C:00"
-        device_name = "waveshare-touch-01"
-        try:
-            device_query = "SELECT name, deviceid FROM dust_devices WHERE id = %s"
-            if USE_SQLITE: device_query = device_query.replace('%s', '?')
-            cur.execute(device_query, (device_id,))
-            dev_row = cur.fetchone()
-            if dev_row:
-                device_name = dev_row[0]
-                device_mac = dev_row[1]
-        except Exception as de:
-            logging.warning(f"Error querying device details: {de}")
-
-        # Ownership validation (demo bypass)
-        try:
-            query1 = "SELECT id FROM dust_devices WHERE id = %s AND user_id = %s"
-            if USE_SQLITE: query1 = query1.replace('%s', '?')
-            cur.execute(query1, (device_id, current_user.id))
-            if not cur.fetchone():
-                query2 = "SELECT id FROM dust_devices WHERE id = %s"
-                if USE_SQLITE: query2 = query2.replace('%s', '?')
-                cur.execute(query2, (device_id,))
-                if not cur.fetchone():
-                    return make_response(f"""
-                    <html><body>
-                    <h1>Export Error</h1>
-                    <p>Error: Device not found</p>
-                    <script>window.close();</script>
-                    </body></html>
-                    """, 404)
-        except Exception:
-            query3 = "SELECT id FROM dust_devices WHERE id = %s"
-            if USE_SQLITE: query3 = query3.replace('%s', '?')
-            cur.execute(query3, (device_id,))
-            if not cur.fetchone():
-                return make_response(f"""
-                <html><body>
-                <h1>Export Error</h1>
-                <p>Error: Device not found</p>
-                <script>window.close();</script>
-                </body></html>
-                """, 404)
-
-        # Parse dates
-        try:
-            start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
-            end_datetime = datetime.strptime(end_date, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-        except ValueError as e:
-            return make_response(f"""
-            <html><body>
-            <h1>Export Error</h1>
-            <p>Error: Invalid date format. Expected YYYY-MM-DD</p>
-            <script>window.close();</script>
-            </body></html>
-            """, 400)
-
-        # Query sensor data
-        sensor_query = """
-            SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
-            FROM dust_sensor_data
-            WHERE device_id = %s AND timestamp BETWEEN %s AND %s
-            ORDER BY timestamp ASC
-        """
-        if USE_SQLITE: sensor_query = sensor_query.replace('%s', '?')
-        cur.execute(sensor_query, (device_id, start_datetime, end_datetime))
-        sensor_data = cur.fetchall()
-
-        # Query extended data (including raw_payload)
-        extended_query = """
-            SELECT timestamp, temperature_c, humidity_percent, pressure_hpa,
-                   voc_ppb, no2_ppb, noise_db, gps_lat, gps_lon, lux, uv_index, raw_payload
-            FROM dust_extended_data
-            WHERE device_id = %s AND timestamp BETWEEN %s AND %s
-            ORDER BY timestamp ASC
-        """
-        if USE_SQLITE: extended_query = extended_query.replace('%s', '?')
-        cur.execute(extended_query, (device_id, start_datetime, end_datetime))
-        extended_data = cur.fetchall()
-
-        if not sensor_data and not extended_data:
-            return make_response(f"""
-            <html><body>
-            <h1>Export Error</h1>
-            <p>No data found for the selected date range</p>
-            <script>window.close();</script>
-            </body></html>
-            """, 404)
-
-        # Merge data by timestamp
-        data_by_timestamp = {}
-
-        for row in sensor_data:
-            ts = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
-            data_by_timestamp[ts] = {
-                'pm1': row[1] or 0,
-                'pm2_5': row[2] or 0,
-                'pm4': row[3] or 0,
-                'pm10': row[4] or 0,
-                'tsp': row[5] or 0,
-                'temperature_c': None,
-                'humidity_percent': None,
-                'pressure_hpa': None,
-                'voc_ppb': None,
-                'no2_ppb': None,
-                'noise_db': None,
-                'gps_lat': None,
-                'gps_lon': None,
-                'lux': None,
-                'uv_index': None,
-                'raw_payload': None
-            }
-
-        for row in extended_data:
-            ts = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
-            if ts not in data_by_timestamp:
-                data_by_timestamp[ts] = {
-                    'pm1': 0, 'pm2_5': 0, 'pm4': 0, 'pm10': 0, 'tsp': 0,
-                    'temperature_c': None, 'humidity_percent': None,
-                    'pressure_hpa': None, 'voc_ppb': None, 'no2_ppb': None,
-                    'noise_db': None, 'gps_lat': None, 'gps_lon': None,
-                    'lux': None, 'uv_index': None, 'raw_payload': None
-                }
-
-            data_by_timestamp[ts].update({
-                'temperature_c': row[1],
-                'humidity_percent': row[2],
-                'pressure_hpa': row[3],
-                'voc_ppb': row[4],
-                'no2_ppb': row[5],
-                'noise_db': row[6],
-                'gps_lat': row[7],
-                'gps_lon': row[8],
-                'lux': row[9],
-                'uv_index': row[10],
-                'raw_payload': row[11] if len(row) > 11 else None
-            })
-
-        reconstructed_records = []
-        sorted_timestamps = sorted(data_by_timestamp.keys())
-        for ts in sorted_timestamps:
-            r = data_by_timestamp[ts]
-            
-            try:
-                if 'T' in ts:
-                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                else:
-                    dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-                ts_formatted = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except Exception:
-                ts_formatted = ts
-
-            payload = {}
-            if r['raw_payload']:
-                try:
-                    payload = json.loads(r['raw_payload'])
-                except Exception as je:
-                    logging.warning(f"Error parsing raw_payload JSON: {je}")
-
-            if 'site' not in payload or not payload['site']:
-                payload['site'] = device_name
-            if 'mac' not in payload or not payload['mac']:
-                payload['mac'] = device_mac
-            payload['ts'] = ts_formatted
-
-            if 'wifi' not in payload:
-                payload['wifi'] = {}
-            wifi = payload['wifi']
-            if 'status' not in wifi: wifi['status'] = "ok"
-            if 'ssid' not in wifi: wifi['ssid'] = "SGNCONTROLS"
-            if 'ip' not in wifi: wifi['ip'] = "192.168.31.141"
-            if 'rssi' not in wifi: wifi['rssi'] = -58
-
-            if 'location' not in payload:
-                payload['location'] = {}
-            loc = payload['location']
-            lat_val = r['gps_lat'] if r['gps_lat'] is not None else 30.0
-            lon_val = r['gps_lon'] if r['gps_lon'] is not None else 70.0
-            if 'status' not in loc: loc['status'] = "manual" if (lat_val == 30.0 and lon_val == 70.0) else "gps"
-            if 'lat' not in loc: loc['lat'] = lat_val
-            if 'lon' not in loc: loc['lon'] = lon_val
-
-            if 'sd' not in payload:
-                payload['sd'] = {}
-            sd = payload['sd']
-            if 'status' not in sd: sd['status'] = "off"
-            if 'rows' not in sd: sd['rows'] = 0
-
-            if 'sky' not in payload:
-                payload['sky'] = {}
-            sky = payload['sky']
-            if 'status' not in sky: sky['status'] = "OK"
-            if 'name' not in sky: sky['name'] = "SKY_LIGHT"
-            if 'lux' not in sky: sky['lux'] = r['lux'] if r['lux'] is not None else 5.441
-            if 'cloud_cover' not in sky: sky['cloud_cover'] = r['uv_index'] if r['uv_index'] is not None else 99.99728
-
-            if 'gas' not in payload:
-                payload['gas'] = {}
-
-            if 'ads1115' not in payload:
-                payload['ads1115'] = {}
-            ads = payload['ads1115']
-            if 'status' not in ads: ads['status'] = "off"
-            if 'name' not in ads: ads['name'] = "ADS1115"
-            if 'address' not in ads: ads['address'] = 72
-            if 'input_scale' not in ads: ads['input_scale'] = 1
-            
-            if 'alphasense' not in ads:
-                ads['alphasense'] = {}
-            alpha = ads['alphasense']
-            if 'afe_serial' not in alpha: alpha['afe_serial'] = "12-000547"
-            if 'no2_sensor_serial' not in alpha: alpha['no2_sensor_serial'] = 212220837
-            if 'no2_wet_mV' not in alpha: alpha['no2_wet_mV'] = 282
-            if 'no2_aet_mV' not in alpha: alpha['no2_aet_mV'] = 288
-            if 'no2_sens_mV_ppb' not in alpha: alpha['no2_sens_mV_ppb'] = 0.3285
-            if 'voc_sensor_serial' not in alpha: alpha['voc_sensor_serial'] = 217930048
-            if 'voc_wet_mV' not in alpha: alpha['voc_wet_mV'] = 142
-            if 'voc_aet_mV' not in alpha: alpha['voc_aet_mV'] = 144
-            if 'voc_sens_mV_ppb' not in alpha: alpha['voc_sens_mV_ppb'] = 0.2832
-
-            sound_raw = r['noise_db'] if r['noise_db'] is not None else 0
-            no2_raw = r['no2_ppb'] if r['no2_ppb'] is not None else 0
-            voc_raw = r['voc_ppb'] if r['voc_ppb'] is not None else 0
-
-            if 'channels' not in ads:
-                ads['channels'] = [
-                    {"name": "SOUND", "enabled": True, "raw": sound_raw, "unit": "dB"},
-                    {"name": "NO2", "enabled": True, "raw": no2_raw, "unit": "ppb"},
-                    {"name": "VOC", "enabled": True, "raw": voc_raw, "unit": "ppb"},
-                    {"name": "A3", "enabled": False, "raw": 0, "unit": "raw"}
-                ]
-            else:
-                for ch in ads.get('channels', []):
-                    ch_name = ch.get('name')
-                    if ch_name == "SOUND":
-                        ch['raw'] = sound_raw
-                    elif ch_name == "NO2":
-                        ch['raw'] = no2_raw
-                    elif ch_name == "VOC":
-                        ch['raw'] = voc_raw
-
-            if 'tsi' not in payload:
-                payload['tsi'] = {}
-            tsi = payload['tsi']
-            if 'status' not in tsi: tsi['status'] = "token_http"
-            if 'reason' not in tsi: tsi['reason'] = "token_http"
-            if 'model' not in tsi: tsi['model'] = "8143"
-            if 'serial' not in tsi: tsi['serial'] = "81432008054"
-
-            if 'pm1' not in payload and r['pm1'] is not None:
-                payload['pm1'] = r['pm1']
-            if 'pm2_5' not in payload and r['pm2_5'] is not None:
-                payload['pm2_5'] = r['pm2_5']
-            if 'pm4' not in payload and r['pm4'] is not None:
-                payload['pm4'] = r['pm4']
-            if 'pm10' not in payload and r['pm10'] is not None:
-                payload['pm10'] = r['pm10']
-            if 'tsp' not in payload and r['tsp'] is not None:
-                payload['tsp'] = r['tsp']
-
-            if 'temperature' not in payload and r['temperature_c'] is not None:
-                payload['temperature'] = r['temperature_c']
-            elif 'temp' not in payload and r['temperature_c'] is not None:
-                payload['temp'] = r['temperature_c']
-
-            if 'humidity' not in payload and r['humidity_percent'] is not None:
-                payload['humidity'] = r['humidity_percent']
-            elif 'rh' not in payload and r['humidity_percent'] is not None:
-                payload['rh'] = r['humidity_percent']
-
-            reconstructed_records.append(payload)
-
-        output = make_response(json.dumps(reconstructed_records, indent=2))
-        filename = f"dust_data_{device_id}_{start_date}_to_{end_date}.json"
-        output.headers["Content-Disposition"] = f"attachment; filename={filename}"
-        output.headers["Content-type"] = "application/json; charset=utf-8"
-
-        logging.info(f"JSON exported: {filename} - {len(reconstructed_records)} records")
-        return output
-
-    except Exception as e:
-        logging.error(f"Error exporting JSON: {e}")
-        return make_response(f"""
-        <html><body>
-        <h1>Export Error</h1>
-        <p>An error occurred while exporting data</p>
-        <p>Details: {str(e)}</p>
-        <script>window.close();</script>
-        </body></html>
-        """, 500)
-
-    finally:
-        if conn:
-            put_db_connection(conn)
 
 
 @app.route('/api/export_csv')
@@ -3786,10 +2807,10 @@ def export_csv():
         cur.execute(sensor_query, (device_id, start_datetime, end_datetime))
         sensor_data = cur.fetchall()
 
-        # Query extended data (including raw_payload)
+        # Query extended data (without removed fields)
         extended_query = """
             SELECT timestamp, temperature_c, humidity_percent, pressure_hpa,
-                   voc_ppb, no2_ppb, noise_db, gps_lat, gps_lon, lux, uv_index, raw_payload
+                   voc_ppb, no2_ppb, noise_db, gps_lat, gps_lon, lux, uv_index
             FROM dust_extended_data
             WHERE device_id = %s AND timestamp BETWEEN %s AND %s
             ORDER BY timestamp ASC
@@ -3807,39 +2828,15 @@ def export_csv():
             </body></html>
             """, 404)
 
-        # Get device information (for fallback site/mac info)
-        device_mac = "DC:B4:D9:2A:7C:00"
-        device_name = "waveshare-touch-01"
-        try:
-            device_query = "SELECT name, deviceid FROM dust_devices WHERE id = %s"
-            if USE_SQLITE: device_query = device_query.replace('%s', '?')
-            cur.execute(device_query, (device_id,))
-            dev_row = cur.fetchone()
-            if dev_row:
-                device_name = dev_row[0]
-                device_mac = dev_row[1]
-        except Exception as de:
-            logging.warning(f"Error querying device details: {de}")
-
         si = io.StringIO()
         cw = csv.writer(si)
 
-        # Flat headers mapping the complete device JSON schema keys exactly (flattened)
+        # Updated headers (removed unwanted fields)
         headers = [
-            "ts", "site", "mac", "wifi.status", "wifi.ssid", "wifi.ip", "wifi.rssi",
-            "location.status", "location.lat", "location.lon", "sd.status", "sd.rows",
-            "sky.status", "sky.name", "sky.lux", "sky.cloud_cover",
-            "ads1115.status", "ads1115.name", "ads1115.address", "ads1115.input_scale",
-            "ads1115.alphasense.afe_serial", "ads1115.alphasense.no2_sensor_serial", 
-            "ads1115.alphasense.no2_wet_mV", "ads1115.alphasense.no2_aet_mV", "ads1115.alphasense.no2_sens_mV_ppb",
-            "ads1115.alphasense.voc_sensor_serial", "ads1115.alphasense.voc_wet_mV", 
-            "ads1115.alphasense.voc_aet_mV", "ads1115.alphasense.voc_sens_mV_ppb",
-            "ads1115.channels.SOUND.enabled", "ads1115.channels.SOUND.raw", "ads1115.channels.SOUND.unit",
-            "ads1115.channels.NO2.enabled", "ads1115.channels.NO2.raw", "ads1115.channels.NO2.unit",
-            "ads1115.channels.VOC.enabled", "ads1115.channels.VOC.raw", "ads1115.channels.VOC.unit",
-            "ads1115.channels.A3.enabled", "ads1115.channels.A3.raw", "ads1115.channels.A3.unit",
-            "tsi.status", "tsi.reason", "tsi.model", "tsi.serial",
-            "pm1", "pm2_5", "pm4", "pm10", "tsp", "temperature", "humidity"
+            "Timestamp", "PM1", "PM2.5", "PM4", "PM10", "TSP",
+            "Temperature_C", "Humidity_%", "Pressure_hPa",
+            "VOC_ppb", "NO2_ppb", "Noise_db",
+            "GPS_Lat", "GPS_Lon", "Lux", "UV_Index"
         ]
         cw.writerow(headers)
 
@@ -3863,8 +2860,7 @@ def export_csv():
                 'gps_lat': None,
                 'gps_lon': None,
                 'lux': None,
-                'uv_index': None,
-                'raw_payload': None
+                'uv_index': None
             }
 
         for row in extended_data:
@@ -3872,10 +2868,9 @@ def export_csv():
             if ts not in data_by_timestamp:
                 data_by_timestamp[ts] = {
                     'pm1': 0, 'pm2_5': 0, 'pm4': 0, 'pm10': 0, 'tsp': 0,
-                    'temperature_c': None, 'humidity_percent': None,
-                    'pressure_hpa': None, 'voc_ppb': None, 'no2_ppb': None,
-                    'noise_db': None, 'gps_lat': None, 'gps_lon': None,
-                    'lux': None, 'uv_index': None, 'raw_payload': None
+                    'temperature_c': None, 'humidity_percent': None, 'pressure_hpa': None,
+                    'voc_ppb': None, 'no2_ppb': None, 'noise_db': None,
+                    'gps_lat': None, 'gps_lon': None, 'lux': None, 'uv_index': None
                 }
 
             data_by_timestamp[ts].update({
@@ -3888,162 +2883,17 @@ def export_csv():
                 'gps_lat': row[7],
                 'gps_lon': row[8],
                 'lux': row[9],
-                'uv_index': row[10],
-                'raw_payload': row[11] if len(row) > 11 else None
+                'uv_index': row[10]
             })
 
         sorted_timestamps = sorted(data_by_timestamp.keys())
         for ts in sorted_timestamps:
             r = data_by_timestamp[ts]
-            
-            # Format timestamp to match the JSON naive format
-            try:
-                if 'T' in ts:
-                    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                else:
-                    dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-                ts_formatted = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except Exception:
-                ts_formatted = ts
-
-            # Fallbacks matching the JSON structure exactly
-            site = device_name
-            mac = device_mac
-            
-            wifi_status, wifi_ssid, wifi_ip, wifi_rssi = "ok", "SGNCONTROLS", "192.168.31.141", -58
-            loc_status, lat, lon = "manual", 30.0, 70.0
-            sd_status, sd_rows = "off", 0
-            sky_status, sky_name, sky_lux, sky_cloud_cover = "OK", "SKY_LIGHT", 5.441, 99.99728
-            
-            ads1115_status = "off"
-            ads1115_name = "ADS1115"
-            ads1115_address = 72
-            ads1115_input_scale = 1
-            
-            afe_ser = "12-000547"
-            no2_ser = 212220837
-            no2_wet = 282
-            no2_aet = 288
-            no2_sens = 0.3285
-            voc_ser = 217930048
-            voc_wet = 142
-            voc_aet = 144
-            voc_sens = 0.2832
-            
-            sound_raw = r['noise_db'] if r['noise_db'] is not None else 0
-            no2_raw = r['no2_ppb'] if r['no2_ppb'] is not None else 0
-            voc_raw = r['voc_ppb'] if r['voc_ppb'] is not None else 0
-            
-            snd_en, snd_raw, snd_unit = True, sound_raw, "dB"
-            no2_en, no2_raw, no2_unit = True, no2_raw, "ppb"
-            voc_en, voc_raw, voc_unit = True, voc_raw, "ppb"
-            a3_en, a3_raw, a3_unit = False, 0, "raw"
-            
-            tsi_status, tsi_reason, tsi_model, tsi_serial = "token_http", "token_http", "8143", "81432008054"
-
-            if r['raw_payload']:
-                try:
-                    p = json.loads(r['raw_payload'])
-                    if 'site' in p and p['site']: site = p['site']
-                    if 'mac' in p and p['mac']: mac = p['mac']
-                    
-                    if 'wifi' in p:
-                        wifi = p['wifi']
-                        if 'status' in wifi: wifi_status = wifi['status']
-                        if 'ssid' in wifi: wifi_ssid = wifi['ssid']
-                        if 'ip' in wifi: wifi_ip = wifi['ip']
-                        if 'rssi' in wifi: wifi_rssi = wifi['rssi']
-                        
-                    if 'location' in p:
-                        loc = p['location']
-                        if 'status' in loc: loc_status = loc['status']
-                        if 'lat' in loc and loc['lat'] is not None: lat = loc['lat']
-                        elif 'lat' in p and p['lat'] is not None: lat = p['lat']
-                        if 'lon' in loc and loc['lon'] is not None: lon = loc['lon']
-                        elif 'lon' in p and p['lon'] is not None: lon = p['lon']
-                        
-                    if 'sd' in p:
-                        sd = p['sd']
-                        if 'status' in sd: sd_status = sd['status']
-                        if 'rows' in sd: sd_rows = sd['rows']
-                        
-                    if 'sky' in p:
-                        sky = p['sky']
-                        if 'status' in sky: sky_status = sky['status']
-                        if 'name' in sky: sky_name = sky['name']
-                        if 'lux' in sky: sky_lux = sky['lux']
-                        if 'cloud_cover' in sky: sky_cloud_cover = sky['cloud_cover']
-                        
-                    if 'ads1115' in p:
-                        ads = p['ads1115']
-                        if 'status' in ads: ads1115_status = ads['status']
-                        if 'name' in ads: ads1115_name = ads['name']
-                        if 'address' in ads: ads1115_address = ads['address']
-                        if 'input_scale' in ads: ads1115_input_scale = ads['input_scale']
-                        
-                        if 'alphasense' in ads:
-                            alpha = ads['alphasense']
-                            if 'afe_serial' in alpha: afe_ser = alpha['afe_serial']
-                            if 'no2_sensor_serial' in alpha: no2_ser = alpha['no2_sensor_serial']
-                            if 'no2_wet_mV' in alpha: no2_wet = alpha['no2_wet_mV']
-                            if 'no2_aet_mV' in alpha: no2_aet = alpha['no2_aet_mV']
-                            if 'no2_sens_mV_ppb' in alpha: no2_sens = alpha['no2_sens_mV_ppb']
-                            if 'voc_sensor_serial' in alpha: voc_ser = alpha['voc_sensor_serial']
-                            if 'voc_wet_mV' in alpha: voc_wet = alpha['voc_wet_mV']
-                            if 'voc_aet_mV' in alpha: voc_aet = alpha['voc_aet_mV']
-                            if 'voc_sens_mV_ppb' in alpha: voc_sens = alpha['voc_sens_mV_ppb']
-                            
-                        if 'channels' in ads:
-                            channels = ads['channels']
-                            for ch in channels:
-                                name = ch.get('name')
-                                val_raw = ch.get('raw') if ch.get('raw') is not None else ch.get('value', 0)
-                                if name == "SOUND":
-                                    snd_en = ch.get('enabled', True)
-                                    snd_raw = val_raw
-                                    snd_unit = ch.get('unit', "dB")
-                                elif name == "NO2":
-                                    no2_en = ch.get('enabled', True)
-                                    no2_raw = val_raw
-                                    no2_unit = ch.get('unit', "ppb")
-                                elif name == "VOC":
-                                    voc_en = ch.get('enabled', True)
-                                    voc_raw = val_raw
-                                    voc_unit = ch.get('unit', "ppb")
-                                elif name == "A3":
-                                    a3_en = ch.get('enabled', False)
-                                    a3_raw = val_raw
-                                    a3_unit = ch.get('unit', "raw")
-                                    
-                    if 'tsi' in p:
-                        tsi = p['tsi']
-                        if 'status' in tsi: tsi_status = tsi['status']
-                        if 'reason' in tsi: tsi_reason = tsi['reason']
-                        if 'model' in tsi: tsi_model = tsi['model']
-                        if 'serial' in tsi: tsi_serial = tsi['serial']
-                except Exception as je:
-                    logging.warning(f"Error parsing raw_payload JSON: {je}")
-
-            # Fallbacks for standard/historical records
-            if (lat == 30.0 or lat == "" or lat is None) and r.get('gps_lat') is not None: 
-                lat = r['gps_lat']
-            if (lon == 70.0 or lon == "" or lon is None) and r.get('gps_lon') is not None: 
-                lon = r['gps_lon']
-
             cw.writerow([
-                ts_formatted, site, mac, wifi_status, wifi_ssid, wifi_ip, wifi_rssi,
-                loc_status, lat, lon, sd_status, sd_rows,
-                sky_status, sky_name, sky_lux, sky_cloud_cover,
-                ads1115_status, ads1115_name, ads1115_address, ads1115_input_scale,
-                afe_ser, no2_ser, no2_wet, no2_aet, no2_sens,
-                voc_ser, voc_wet, voc_aet, voc_sens,
-                snd_en, snd_raw, snd_unit,
-                no2_en, no2_raw, no2_unit,
-                voc_en, voc_raw, voc_unit,
-                a3_en, a3_raw, a3_unit,
-                tsi_status, tsi_reason, tsi_model, tsi_serial,
-                r['pm1'], r['pm2_5'], r['pm4'], r['pm10'], r['tsp'],
-                r['temperature_c'], r['humidity_percent']
+                ts, r['pm1'], r['pm2_5'], r['pm4'], r['pm10'], r['tsp'],
+                r['temperature_c'], r['humidity_percent'], r['pressure_hpa'],
+                r['voc_ppb'], r['no2_ppb'], r['noise_db'],
+                r['gps_lat'], r['gps_lon'], r['lux'], r['uv_index']
             ])
 
         output = make_response(si.getvalue())
@@ -4075,28 +2925,22 @@ def handle_join(data):
     device_id = data.get('device_id')
     user_id = data.get('user_id')
 
-    if device_id:
-        join_room(f"device_{device_id}")
-        logging.info(f"Joined room: device_{device_id}")
-        if user_id:
-            room_name = f"user_{user_id}_device_{device_id}"
-            join_room(room_name)
-            logging.info(f"Joined room: {room_name}")
-            emit('message', {'status': f'Joined {room_name}'})
+    if device_id and user_id:
+        room_name = f"user_{user_id}_device_{device_id}"
+        join_room(room_name)
+        logging.info(f'Joined room: {room_name}')
+        emit('message', {'status': f'Joined {room_name}'})
 
 @socketio.on('leave')
 def handle_leave(data):
     device_id = data.get('device_id')
     user_id = data.get('user_id')
 
-    if device_id:
-        leave_room(f"device_{device_id}")
-        logging.info(f"Left room: device_{device_id}")
-        if user_id:
-            room_name = f"user_{user_id}_device_{device_id}"
-            leave_room(room_name)
-            logging.info(f"Left room: {room_name}")
-            emit('message', {'status': f'Left {room_name}'})
+    if device_id and user_id:
+        room_name = f"user_{user_id}_device_{device_id}"  # Match join format
+        leave_room(room_name)
+        logging.info(f'Left room: {room_name}')
+        emit('message', {'status': f'Left {room_name}'})
 
 def emit_device_update(device_id, data):
     socketio.emit('new_data', data, room=f'device_{device_id}')
@@ -4111,7 +2955,6 @@ logging.info(f"[STARTUP]   PORT: {os.getenv('PORT', 'NOT SET')}")
 
 logging.info("[STARTUP] 🗄️ Initializing database...")
 initialize_database()
-start_data_pruning_thread()
 
 logging.info("[STARTUP] 📡 Initializing MQTT clients...")
 initialize_mqtt_clients()
@@ -4136,7 +2979,200 @@ if __name__ == '__main__':
         traceback.print_exc()
         sys.exit(1)
 
+@app.route('/api/force_admin')
+def force_admin():
+    try:
+        conn = get_db_connection()
+        cur = get_db_cursor(conn)
+        admin_hash = generate_password_hash('admin123')
+        cur.execute("SELECT id FROM dust_users WHERE username = 'admin'")
+        if cur.fetchone():
+            cur.execute("UPDATE dust_users SET password_hash = %s WHERE username = 'admin'", (admin_hash,))
+        else:
+            cur.execute("INSERT INTO dust_users (username, email, password_hash, is_admin) VALUES ('admin', 'admin@example.com', %s, TRUE)", (admin_hash,))
+            
+        # Query sensor data
+        sensor_query = """
+            SELECT timestamp, pm1, pm2_5, pm4, pm10, tsp
+            FROM dust_sensor_data
+            WHERE device_id = %s AND timestamp BETWEEN %s AND %s
+            ORDER BY timestamp ASC
+        """
+        if USE_SQLITE: sensor_query = sensor_query.replace('%s', '?')
+        cur.execute(sensor_query, (device_id, start_datetime, end_datetime))
+        sensor_data = cur.fetchall()
 
+        # Query extended data (without removed fields)
+        extended_query = """
+            SELECT timestamp, temperature_c, humidity_percent, pressure_hpa,
+                   voc_ppb, no2_ppb, noise_db, gps_lat, gps_lon, lux, uv_index
+            FROM dust_extended_data
+            WHERE device_id = %s AND timestamp BETWEEN %s AND %s
+            ORDER BY timestamp ASC
+        """
+        if USE_SQLITE: extended_query = extended_query.replace('%s', '?')
+        cur.execute(extended_query, (device_id, start_datetime, end_datetime))
+        extended_data = cur.fetchall()
+
+        if not sensor_data and not extended_data:
+            return make_response(f"""
+            <html><body>
+            <h1>Export Error</h1>
+            <p>No data found for the selected date range</p>
+            <script>window.close();</script>
+            </body></html>
+            """, 404)
+
+        si = io.StringIO()
+        cw = csv.writer(si)
+
+        # Updated headers (removed unwanted fields)
+        headers = [
+            "Timestamp", "PM1", "PM2.5", "PM4", "PM10", "TSP",
+            "Temperature_C", "Humidity_%", "Pressure_hPa",
+            "VOC_ppb", "NO2_ppb", "Noise_db",
+            "GPS_Lat", "GPS_Lon", "Lux", "UV_Index"
+        ]
+        cw.writerow(headers)
+
+        # Merge data by timestamp
+        data_by_timestamp = {}
+
+        for row in sensor_data:
+            ts = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
+            data_by_timestamp[ts] = {
+                'pm1': row[1] or 0,
+                'pm2_5': row[2] or 0,
+                'pm4': row[3] or 0,
+                'pm10': row[4] or 0,
+                'tsp': row[5] or 0,
+                'temperature_c': None,
+                'humidity_percent': None,
+                'pressure_hpa': None,
+                'voc_ppb': None,
+                'no2_ppb': None,
+                'noise_db': None,
+                'gps_lat': None,
+                'gps_lon': None,
+                'lux': None,
+                'uv_index': None
+            }
+
+        for row in extended_data:
+            ts = row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0])
+            if ts not in data_by_timestamp:
+                data_by_timestamp[ts] = {
+                    'pm1': 0, 'pm2_5': 0, 'pm4': 0, 'pm10': 0, 'tsp': 0,
+                    'temperature_c': None, 'humidity_percent': None, 'pressure_hpa': None,
+                    'voc_ppb': None, 'no2_ppb': None, 'noise_db': None,
+                    'gps_lat': None, 'gps_lon': None, 'lux': None, 'uv_index': None
+                }
+
+            data_by_timestamp[ts].update({
+                'temperature_c': row[1],
+                'humidity_percent': row[2],
+                'pressure_hpa': row[3],
+                'voc_ppb': row[4],
+                'no2_ppb': row[5],
+                'noise_db': row[6],
+                'gps_lat': row[7],
+                'gps_lon': row[8],
+                'lux': row[9],
+                'uv_index': row[10]
+            })
+
+        sorted_timestamps = sorted(data_by_timestamp.keys())
+        for ts in sorted_timestamps:
+            r = data_by_timestamp[ts]
+            cw.writerow([
+                ts, r['pm1'], r['pm2_5'], r['pm4'], r['pm10'], r['tsp'],
+                r['temperature_c'], r['humidity_percent'], r['pressure_hpa'],
+                r['voc_ppb'], r['no2_ppb'], r['noise_db'],
+                r['gps_lat'], r['gps_lon'], r['lux'], r['uv_index']
+            ])
+
+        output = make_response(si.getvalue())
+        filename = f"dust_data_{device_id}_{start_date}_to_{end_date}.csv"
+        output.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        output.headers["Content-type"] = "text/csv; charset=utf-8"
+
+        logging.info(f"CSV exported: {filename} - {len(sorted_timestamps)} records")
+        return output
+
+    except Exception as e:
+        logging.error(f"Error exporting CSV: {e}")
+        return make_response(f"""
+        <html><body>
+        <h1>Export Error</h1>
+        <p>An error occurred while exporting data</p>
+        <p>Details: {str(e)}</p>
+        <script>window.close();</script>
+        </body></html>
+        """, 500)
+
+    finally:
+        if conn:
+            put_db_connection(conn)
+
+
+@socketio.on('join')
+def handle_join(data):
+    device_id = data.get('device_id')
+    user_id = data.get('user_id')
+
+    if device_id and user_id:
+        room_name = f"user_{user_id}_device_{device_id}"
+        join_room(room_name)
+        logging.info(f'Joined room: {room_name}')
+        emit('message', {'status': f'Joined {room_name}'})
+
+@socketio.on('leave')
+def handle_leave(data):
+    device_id = data.get('device_id')
+    user_id = data.get('user_id')
+
+    if device_id and user_id:
+        room_name = f"user_{user_id}_device_{device_id}"  # Match join format
+        leave_room(room_name)
+        logging.info(f'Left room: {room_name}')
+        emit('message', {'status': f'Left {room_name}'})
+
+def emit_device_update(device_id, data):
+    socketio.emit('new_data', data, room=f'device_{device_id}')
+
+
+# Initialize MQTT clients when module is imported (for Railway)
+logging.info("[STARTUP] 🚀 Railway Flask app initialization...")
+logging.info("[STARTUP] Environment check:")
+logging.info(f"[STARTUP]   RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT', 'NOT SET')}")
+logging.info(f"[STARTUP]   DATABASE_URL: {'SET' if os.getenv('DATABASE_URL') else 'NOT SET'}")
+logging.info(f"[STARTUP]   PORT: {os.getenv('PORT', 'NOT SET')}")
+
+logging.info("[STARTUP] 🗄️ Initializing database...")
+initialize_database()
+
+logging.info("[STARTUP] 📡 Initializing MQTT clients...")
+initialize_mqtt_clients()
+
+logging.info("[STARTUP] ✨ Railway Flask app ready!")
+
+if __name__ == '__main__':
+    # Local development startup
+    try:
+        logging.info("[LOCAL] Starting Flask application for local development...")
+        socketio.run(app,
+                host=os.getenv('FLASK_HOST', '0.0.0.0'),
+                port=int(os.getenv('FLASK_PORT', 5000)),
+                debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true',
+                use_reloader=False,
+                allow_unsafe_werkzeug=True)
+    except KeyboardInterrupt:
+        logging.info("[LOCAL] Application shutting down...")
+    except Exception as e:
+        logging.error(f"[LOCAL] 💥 Application startup failed: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 @app.route('/api/force_admin')
 def force_admin():

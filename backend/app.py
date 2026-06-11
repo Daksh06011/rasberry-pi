@@ -222,7 +222,7 @@ DB_POOL = None
 if USE_SQLITE:
     # SQLite mode for local development
     import sqlite3
-    sqlite_db_path = 'pm_monitoring.db'
+    sqlite_db_path = os.getenv('SQLITE_DB_PATH', 'pm_monitoring.db')
     
     def init_sqlite_db():
         conn = sqlite3.connect(sqlite_db_path, timeout=30.0)
@@ -481,7 +481,7 @@ def get_db_connection():
     """Get database connection with error handling"""
     try:
         if USE_SQLITE:
-            conn = sqlite3.connect('pm_monitoring.db', timeout=30.0)
+            conn = sqlite3.connect(sqlite_db_path, timeout=30.0)
             conn.row_factory = sqlite3.Row
             return conn
         else:
@@ -532,9 +532,57 @@ def put_db_connection(conn):
         logging.error(f"Error returning connection to pool: {e}")
 
 
-def release_db_connection(conn):
-    """Backward-compatible alias for put_db_connection"""
-    put_db_connection(conn)
+def start_data_pruning_thread():
+    """Start a background daemon thread to prune data older than RETENTION_DAYS periodically."""
+    def prune_loop():
+        # Delay initial execution slightly to allow app startup to complete smoothly
+        time.sleep(10)
+        while True:
+            try:
+                retention_days = int(os.getenv('RETENTION_DAYS', '90'))
+                logging.info(f"[PRUNING] Starting database pruning. Retention window: {retention_days} days...")
+                conn = get_db_connection()
+                cur = get_db_cursor(conn)
+                
+                # Calculate cut-off time
+                cutoff_time = datetime.now(timezone.utc) - timedelta(days=retention_days)
+                
+                if USE_SQLITE:
+                    cutoff_str = cutoff_time.isoformat().replace('+00:00', 'Z')
+                    
+                    cur.execute("DELETE FROM dust_sensor_data WHERE timestamp < ?", (cutoff_str,))
+                    sensor_deleted = cur.rowcount
+                    
+                    cur.execute("DELETE FROM dust_extended_data WHERE timestamp < ?", (cutoff_str,))
+                    extended_deleted = cur.rowcount
+                    
+                    cur.execute("DELETE FROM dust_device_alerts WHERE created_at < datetime('now', ?)", (f"-{retention_days} days",))
+                    alerts_deleted = cur.rowcount
+                else:
+                    cur.execute("DELETE FROM dust_sensor_data WHERE timestamp < %s", (cutoff_time,))
+                    sensor_deleted = cur.rowcount
+                    
+                    cur.execute("DELETE FROM dust_extended_data WHERE timestamp < %s", (cutoff_time,))
+                    extended_deleted = cur.rowcount
+                    
+                    cur.execute("DELETE FROM dust_device_alerts WHERE created_at < NOW() - CAST(%s || ' days' AS INTERVAL)", (str(retention_days),))
+                    alerts_deleted = cur.rowcount
+                
+                conn.commit()
+                logging.info(f"[PRUNING] Database pruning complete. Deleted rows: "
+                             f"sensor_data={sensor_deleted}, extended_data={extended_deleted}, alerts={alerts_deleted}")
+            except Exception as e:
+                logging.error(f"[PRUNING] Error during database pruning: {e}")
+            finally:
+                if 'conn' in locals() and conn:
+                    put_db_connection(conn)
+            
+            # Run once every 24 hours
+            time.sleep(86400)
+
+    thread = threading.Thread(target=prune_loop, daemon=True)
+    thread.start()
+    logging.info("[PRUNING] Data pruning background thread spawned.")
 
 
 
@@ -873,6 +921,14 @@ def process_extended_device_data(payload, device_id, timestamp, data_source_id):
         elif "tsi_pm1" in payload or "tsi" in payload:
             logging.info(f"[EXTENDED] Processing HiveMQ format")
             process_hivemq_data(payload, device_id_db, timestamp, data_source_id, cur)
+        elif "temperature" in payload or "humidity" in payload:
+            logging.info(f"[EXTENDED] Processing temperature/humidity/moisture sensor format")
+            temperature = payload.get("temperature")
+            humidity = payload.get("humidity")
+            insert_extended_data(cur, device_id_db, timestamp, temperature, humidity, None,
+                           None, None, None, None, None, None, None, None,
+                           None, None, None, None, None, None, None, None,
+                           raw_payload=json.dumps(payload))
         else:
             logging.info(f"[EXTENDED] Processing legacy extended format")
             # Legacy format processing
@@ -1299,7 +1355,7 @@ def on_mqtt_connect(client, userdata, flags, rc, properties=None):
 def on_mqtt_message(client, userdata, msg):
     try:
         payload = json.loads(msg.payload.decode())
-        device_id = payload.get("deviceid") or payload.get("i")  # Support both formats
+        device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac") or os.getenv('DEFAULT_DEVICE_ID', 'SGN-V3-12')
 
         if not device_id:
             logging.warning("MQTT message missing deviceid or i")
@@ -1321,12 +1377,15 @@ def on_mqtt_message(client, userdata, msg):
             # Check for legacy extended format
             has_pm_data = "PM_data" in payload
             has_extended_keys = any(k in payload for k in ["Temperature_C", "Humidity_%", "GPS"])
+            has_hivemq_data = "tsi_pm1" in payload or "tsi" in payload
+            has_temp_humidity_data = "temperature" in payload or "humidity" in payload
 
             logging.info(f"[MQTT] Compact format present: {is_compact_format}")
             logging.info(f"[MQTT] Legacy PM_data present: {has_pm_data}")
             logging.info(f"[MQTT] Legacy extended keys present: {has_extended_keys}")
+            logging.info(f"[MQTT] Temperature/Humidity format present: {has_temp_humidity_data}")
 
-            if is_compact_format or (has_pm_data and has_extended_keys):
+            if is_compact_format or (has_pm_data and has_extended_keys) or has_hivemq_data or has_temp_humidity_data:
                 logging.info("[MQTT] Routing to process_extended_device_data")
                 process_extended_device_data(payload, device_id, timestamp, data_source_id)
             else:
@@ -1362,8 +1421,7 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                 logging.info(f"[MQTT-{data_source_id}] Payload size: {len(raw_payload)} bytes")
                 logging.info(f"[MQTT-{data_source_id}] Full payload: {raw_payload}")
 
-                payload = json.loads(raw_payload)
-                device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac")
+                device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac") or os.getenv('DEFAULT_DEVICE_ID', 'SGN-V3-12')
 
                 if not device_id:
                     logging.warning(f"[MQTT-{data_source_id}] Message missing deviceid or i")
@@ -1380,10 +1438,11 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
                     has_pm_data = "PM_data" in payload
                     has_extended_keys = any(k in payload for k in ["Temperature_C", "Humidity_%", "GPS"])
                     has_hivemq_data = "tsi_pm1" in payload or "tsi" in payload
+                    has_temp_humidity_data = "temperature" in payload or "humidity" in payload
 
-                    logging.info(f"[MQTT-{data_source_id}] Compact format: {is_compact_format}, HiveMQ: {has_hivemq_data}")
+                    logging.info(f"[MQTT-{data_source_id}] Compact format: {is_compact_format}, HiveMQ: {has_hivemq_data}, Temperature/Humidity: {has_temp_humidity_data}")
 
-                    if is_compact_format or (has_pm_data and has_extended_keys) or has_hivemq_data:
+                    if is_compact_format or (has_pm_data and has_extended_keys) or has_hivemq_data or has_temp_humidity_data:
                         logging.info(f"[MQTT-{data_source_id}] Processing extended data")
                         process_extended_device_data(payload, device_id, timestamp, data_source_id_local)
                     else:
@@ -4052,6 +4111,7 @@ logging.info(f"[STARTUP]   PORT: {os.getenv('PORT', 'NOT SET')}")
 
 logging.info("[STARTUP] 🗄️ Initializing database...")
 initialize_database()
+start_data_pruning_thread()
 
 logging.info("[STARTUP] 📡 Initializing MQTT clients...")
 initialize_mqtt_clients()
