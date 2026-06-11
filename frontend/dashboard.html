@@ -1,5 +1,52 @@
+(venv) raspberry@raspberrypi:~/uk_pm_monitoring_test $ # 1. Restart Nginx to apply all proxy settings
+sudo systemctl restart nginx
+
+# 2. Check Nginx status
+echo "--- Nginx Status ---"
+sudo systemctl status nginx --no-pager | head -n 15
+
+# 3. Test backend directly on port 5000
+echo "--- Testing Backend (Port 5000) ---"
+curl -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}'
+http://127.0.0.1:5000/api/login
+
+# 4. Test Nginx routing on port 80
+echo "--- Testing Nginx Routing (Port 80) ---"
+curl -X POST -H "Content-Type: application/json" -d '{"username":"admin","password":"admin123"}'
+http://127.0.0.1/api/login
+--- Nginx Status ---
+● nginx.service - A high performance web server and a reverse proxy server
+Loaded: loaded (/lib/systemd/system/nginx.service; enabled; preset: enabled)
+Active: active (running) since Thu 2026-06-11 20:41:32 IST; 240ms ago
+Docs: man:nginx(8)
+Process: 458553 ExecStartPre=/usr/sbin/nginx -t -q -g daemon on; master_process on; (code=exited, status=0/SUCCESS)
+Process: 458557 ExecStart=/usr/sbin/nginx -g daemon on; master_process on; (code=exited, status=0/SUCCESS)
+Main PID: 458558 (nginx)
+Tasks: 5 (limit: 758)
+CPU: 74ms
+CGroup: /system.slice/nginx.service
+├─458558 "nginx: master process /usr/sbin/nginx -g daemon on; master_process on;"
+├─458559 "nginx: worker process"
+├─458560 "nginx: worker process"
+├─458561 "nginx: worker process"
+└─458562 "nginx: worker process"
+--- Testing Backend (Port 5000) ---
+<!doctype html>
+<html lang=en>
+<title>404 Not Found</title>
+<h1>Not Found</h1>
+<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try
+    again.</p>
+--- Testing Nginx Routing (Port 80) ---
+<!doctype html>
+<html lang=en>
+<title>404 Not Found</title>
+<h1>Not Found</h1>
+<p>The requested URL was not found on the server. If you entered the URL manually please check your spelling and try
+    again.</p>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,7 +59,8 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <!-- Single Socket.IO include; avoid duplicates -->
     <link rel="stylesheet" href="static/styles.css">
@@ -22,28 +70,29 @@
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 
     <!-- Leaflet CSS -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
 
-<!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
     <!-- Google Maps API -->
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDELFbu3W8tZ04bqOnKFyRZZS1AuGiIeA4"></script>
 </head>
+
 <body>
     <!-- Enhanced Navigation Bar -->
-    <nav class="navbar navbar-expand-lg navbar-dark fixed-top" style="background: linear-gradient(135deg, #FF8C00 0%, #FFA500 100%); box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.2);">
+    <nav class="navbar navbar-expand-lg navbar-dark fixed-top"
+        style="background: linear-gradient(135deg, #FF8C00 0%, #FFA500 100%); box-shadow: 0px 4px 15px rgba(0, 0, 0, 0.2);">
         <div class="container-fluid">
-            <a class="navbar-brand" href="#" style="padding: 0.75rem 1rem; font-weight: 700; letter-spacing: 0.5px; color: white !important;">
+            <a class="navbar-brand" href="#"
+                style="padding: 0.75rem 1rem; font-weight: 700; letter-spacing: 0.5px; color: white !important;">
                 <i class="fas fa-atom me-2"></i>
                 <span class="fw-bold">SGN Controls</span>
                 <small class="badge bg-light text-dark ms-2">v2.0</small>
             </a>
-            
+
             <div class="navbar-nav ms-auto">
                 <!-- Real-time Status Indicator -->
                 <div class="nav-item me-3 d-flex align-items-center">
@@ -52,7 +101,7 @@
                     </div>
                     <span class="text-white" id="navConnectionStatus">Offline</span>
                 </div>
-                
+
                 <!-- Theme Toggle -->
                 <div class="theme-switch-wrapper me-3 d-flex align-items-center">
                     <label class="theme-switch" for="theme-toggle">
@@ -61,16 +110,21 @@
                     </label>
                     <span class="ms-2 text-white"><i class="bi bi-moon-stars"></i></span>
                 </div>
-                
+
                 <!-- Settings Dropdown -->
                 <div class="dropdown">
-                    <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                    <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button"
+                        data-bs-toggle="dropdown">
                         <i class="bi bi-gear"></i> Settings
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="change_password.html"><i class="bi bi-key me-2"></i>Change Password</a></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item" href="#" onclick="handleLogout()"><i class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
+                        <li><a class="dropdown-item" href="change_password.html"><i class="bi bi-key me-2"></i>Change
+                                Password</a></li>
+                        <li>
+                            <hr class="dropdown-divider">
+                        </li>
+                        <li><a class="dropdown-item" href="#" onclick="handleLogout()"><i
+                                    class="bi bi-box-arrow-right me-2"></i>Logout</a></li>
                     </ul>
                 </div>
                 <script>
@@ -86,7 +140,7 @@
 
     <!-- Main Dashboard Container -->
     <div class="container-fluid" style="margin-top: 80px;">
-        
+
         <!-- Dashboard Header & Quick Stats -->
         <div class="row mb-4">
             <div class="col-12">
@@ -104,7 +158,8 @@
                                     <div class="col-6 col-md-4 col-lg-2">
                                         <div class="quick-stat card p-2 p-md-3 h-100 shadow-sm border-0">
                                             <div class="d-flex align-items-center">
-                                                <div class="stat-icon bg-primary rounded-circle d-flex align-items-center justify-content-center">
+                                                <div
+                                                    class="stat-icon bg-primary rounded-circle d-flex align-items-center justify-content-center">
                                                     <i class="bi bi-cpu fs-4"></i>
                                                 </div>
                                                 <div class="stat-info ms-3">
@@ -117,7 +172,8 @@
                                     <div class="col-md-2">
                                         <div class="quick-stat card p-3 h-100 shadow-sm border-0">
                                             <div class="d-flex align-items-center">
-                                                <div class="stat-icon bg-success rounded-circle d-flex align-items-center justify-content-center">
+                                                <div
+                                                    class="stat-icon bg-success rounded-circle d-flex align-items-center justify-content-center">
                                                     <i class="bi bi-wifi fs-4"></i>
                                                 </div>
                                                 <div class="stat-info ms-3">
@@ -130,7 +186,8 @@
                                     <div class="col-md-2">
                                         <div class="quick-stat card p-3 h-100 shadow-sm border-0">
                                             <div class="d-flex align-items-center">
-                                                <div class="stat-icon bg-warning rounded-circle d-flex align-items-center justify-content-center">
+                                                <div
+                                                    class="stat-icon bg-warning rounded-circle d-flex align-items-center justify-content-center">
                                                     <i class="bi bi-exclamation-triangle fs-4"></i>
                                                 </div>
                                                 <div class="stat-info ms-3">
@@ -143,7 +200,8 @@
                                     <div class="col-md-2">
                                         <div class="quick-stat card p-3 h-100 shadow-sm border-0">
                                             <div class="d-flex align-items-center">
-                                                <div class="stat-icon bg-info rounded-circle d-flex align-items-center justify-content-center">
+                                                <div
+                                                    class="stat-icon bg-info rounded-circle d-flex align-items-center justify-content-center">
                                                     <i class="bi bi-cloud text-white fs-4"></i>
                                                 </div>
                                                 <div class="stat-info ms-3">
@@ -156,7 +214,8 @@
                                     <div class="col-md-2">
                                         <div class="quick-stat card p-3 h-100 shadow-sm border-0">
                                             <div class="d-flex align-items-center">
-                                                <div class="stat-icon bg-danger rounded-circle d-flex align-items-center justify-content-center">
+                                                <div
+                                                    class="stat-icon bg-danger rounded-circle d-flex align-items-center justify-content-center">
                                                     <i class="bi bi-volume-up text-white fs-4"></i>
                                                 </div>
                                                 <div class="stat-info ms-3">
@@ -169,7 +228,8 @@
                                     <div class="col-md-2">
                                         <div class="quick-stat card p-3 h-100 shadow-sm border-0">
                                             <div class="d-flex align-items-center">
-                                                <div class="stat-icon bg-secondary rounded-circle d-flex align-items-center justify-content-center">
+                                                <div
+                                                    class="stat-icon bg-secondary rounded-circle d-flex align-items-center justify-content-center">
                                                     <i class="bi bi-clock fs-4"></i>
                                                 </div>
                                                 <div class="stat-info ms-3">
@@ -197,7 +257,8 @@
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">
                             <i class="fas fa-microchip me-2 text-primary"></i>Device Selection
-                            <span id="deviceTypeIndicator" class="badge bg-secondary ms-2" style="display: none;">BASIC</span>
+                            <span id="deviceTypeIndicator" class="badge bg-secondary ms-2"
+                                style="display: none;">BASIC</span>
                         </h5>
                         <button class="btn btn-modern btn-sm" id="toggleMapView">
                             <i class="fas fa-map" id="mapToggleIcon"></i>
@@ -208,9 +269,9 @@
                         <div class="row g-3">
                             <div class="col-md-9">
                                 <label for="deviceSelect" class="form-label fw-bold">Select Device:</label>
-                        <select id="deviceSelect" class="form-select form-select-lg shadow-sm border-0">
-                            <option value="">Select a device...</option>
-                        </select>
+                                <select id="deviceSelect" class="form-select form-select-lg shadow-sm border-0">
+                                    <option value="">Select a device...</option>
+                                </select>
                             </div>
                             <div class="col-md-3">
                                 <label class="form-label fw-bold">Actions:</label>
@@ -233,7 +294,8 @@
                                         <i class="fas fa-map-marker-alt me-1 text-primary"></i>Select Device from Map:
                                     </label>
                                     <div class="btn-group btn-group-sm">
-                                        <button type="button" class="btn btn-outline-secondary" id="refreshDeviceMapBtn">
+                                        <button type="button" class="btn btn-outline-secondary"
+                                            id="refreshDeviceMapBtn">
                                             <i class="fas fa-sync-alt"></i>
                                         </button>
                                         <button type="button" class="btn btn-outline-secondary" id="fitDeviceMapBtn">
@@ -241,7 +303,9 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div id="deviceSelectMap" style="height: 350px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);"></div>
+                                <div id="deviceSelectMap"
+                                    style="height: 350px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -289,12 +353,12 @@
 
         <!-- Tab Content -->
         <div class="tab-content dashboard-content" id="deviceTypeTabContent">
-            
+
             <!-- Overview Tab -->
             <div class="tab-pane fade show active" id="overview" role="tabpanel">
 
                 <div class="row mt-3">
-                    
+
                     <!-- Main Chart Section -->
                     <div class="col-12 mb-4">
                         <div class="card enhanced-card chart-card shadow-sm border-0">
@@ -323,98 +387,113 @@
                                 </div>
                             </div>
                             <div class="card-body">
-                                <div class="chart-container" style="overflow: hidden; position: relative; height: 85vh; min-height: 800px;">
+                                <div class="chart-container"
+                                    style="overflow: hidden; position: relative; height: 85vh; min-height: 800px;">
                                     <canvas id="environmentalCombinedChart"></canvas>
                                 </div>
                                 <!-- Chart Legend with Statistics -->
                                 <div class="chart-legend mt-3">
-                                    <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 text-center g-2" id="dynamicChartLegend">
+                                    <div class="row row-cols-2 row-cols-md-3 row-cols-lg-5 text-center g-2"
+                                        id="dynamicChartLegend">
                                         <!-- Legend items will be populated dynamically by script.js -->
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    
 
-            </div>
 
-            <!-- Unified Dashboard Tab -->
-            <div class="tab-pane fade" id="unified" role="tabpanel" aria-labelledby="unified-tab">
-                <div class="row mt-3">
-                    <div class="col-12">
-                        <div class="card enhanced-card chart-card shadow-sm border-0">
-                            <div class="card-header bg-light">
-                                <div class="d-flex flex-wrap justify-content-between align-items-center">
-                                    <div class="mb-2 mb-md-0">
-                                        <h5 class="mb-0">
-                                            <i class="bi bi-graph-up me-2"></i>Complete Environmental Data
-                                        </h5>
-                                        <small class="text-muted">All sensor readings in one unified view</small>
-                                    </div>
-                                    <div class="chart-controls">
-                                        <div class="btn-group btn-group-sm" role="group">
-                                            <button class="btn btn-outline-primary" onclick="toggleUnifiedChartType('line')" title="Line Chart">
-                                                <i class="bi bi-graph-up"></i>
-                                            </button>
-                                            <button class="btn btn-outline-primary" onclick="toggleUnifiedChartType('bar')" title="Bar Chart">
-                                                <i class="bi bi-bar-chart"></i>
-                                            </button>
+                </div>
+
+                <!-- Unified Dashboard Tab -->
+                <div class="tab-pane fade" id="unified" role="tabpanel" aria-labelledby="unified-tab">
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <div class="card enhanced-card chart-card shadow-sm border-0">
+                                <div class="card-header bg-light">
+                                    <div class="d-flex flex-wrap justify-content-between align-items-center">
+                                        <div class="mb-2 mb-md-0">
+                                            <h5 class="mb-0">
+                                                <i class="bi bi-graph-up me-2"></i>Complete Environmental Data
+                                            </h5>
+                                            <small class="text-muted">All sensor readings in one unified view</small>
+                                        </div>
+                                        <div class="chart-controls">
+                                            <div class="btn-group btn-group-sm" role="group">
+                                                <button class="btn btn-outline-primary"
+                                                    onclick="toggleUnifiedChartType('line')" title="Line Chart">
+                                                    <i class="bi bi-graph-up"></i>
+                                                </button>
+                                                <button class="btn btn-outline-primary"
+                                                    onclick="toggleUnifiedChartType('bar')" title="Bar Chart">
+                                                    <i class="bi bi-bar-chart"></i>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                            <div class="card-body">
-                                <div class="chart-container" style="overflow: hidden; position: relative; height: 600px;">
-                                    <canvas id="unifiedChart"></canvas>
-                                </div>
-                                <!-- Unified Chart Legend with Statistics -->
-                                <div class="chart-legend mt-4">
-                                    <div class="row g-3">
-                                        <div class="col-md-3">
-                                            <h6 class="text-muted mb-2"><i class="bi bi-wind"></i> Particulate Matter</h6>
-                                            <div class="row row-cols-2 g-2">
-                                                <div class="col"><span class="small"><span class="badge bg-danger"></span> PM1</span></div>
-                                                <div class="col"><strong id="unified-pm1">-- μg/m³</strong></div>
-                                                <div class="col"><span class="small"><span class="badge" style="background: #36a2eb;"></span> PM2.5</span></div>
-                                                <div class="col"><strong id="unified-pm25">-- μg/m³</strong></div>
-                                                <div class="col"><span class="small"><span class="badge" style="background: #4bc0c0;"></span> PM4</span></div>
-                                                <div class="col"><strong id="unified-pm4">-- μg/m³</strong></div>
-                                                <div class="col"><span class="small"><span class="badge" style="background: #ffce56;"></span> PM10</span></div>
-                                                <div class="col"><strong id="unified-pm10">-- μg/m³</strong></div>
+                                <div class="card-body">
+                                    <div class="chart-container"
+                                        style="overflow: hidden; position: relative; height: 600px;">
+                                        <canvas id="unifiedChart"></canvas>
+                                    </div>
+                                    <!-- Unified Chart Legend with Statistics -->
+                                    <div class="chart-legend mt-4">
+                                        <div class="row g-3">
+                                            <div class="col-md-3">
+                                                <h6 class="text-muted mb-2"><i class="bi bi-wind"></i> Particulate
+                                                    Matter</h6>
+                                                <div class="row row-cols-2 g-2">
+                                                    <div class="col"><span class="small"><span
+                                                                class="badge bg-danger"></span> PM1</span></div>
+                                                    <div class="col"><strong id="unified-pm1">-- μg/m³</strong></div>
+                                                    <div class="col"><span class="small"><span class="badge"
+                                                                style="background: #36a2eb;"></span> PM2.5</span></div>
+                                                    <div class="col"><strong id="unified-pm25">-- μg/m³</strong></div>
+                                                    <div class="col"><span class="small"><span class="badge"
+                                                                style="background: #4bc0c0;"></span> PM4</span></div>
+                                                    <div class="col"><strong id="unified-pm4">-- μg/m³</strong></div>
+                                                    <div class="col"><span class="small"><span class="badge"
+                                                                style="background: #ffce56;"></span> PM10</span></div>
+                                                    <div class="col"><strong id="unified-pm10">-- μg/m³</strong></div>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <h6 class="text-muted mb-2"><i class="bi bi-cloud"></i> Environmental</h6>
-                                            <div class="row row-cols-2 g-2">
-                                                <div class="col"><span class="small">Temperature</span></div>
-                                                <div class="col"><strong id="unified-temp">-- °C</strong></div>
-                                                <div class="col"><span class="small">Humidity</span></div>
-                                                <div class="col"><strong id="unified-humid">-- %</strong></div>
-                                                <div class="col"><span class="small">Pressure</span></div>
-                                                <div class="col"><strong id="unified-pressure">-- hPa</strong></div>
+                                            <div class="col-md-3">
+                                                <h6 class="text-muted mb-2"><i class="bi bi-cloud"></i> Environmental
+                                                </h6>
+                                                <div class="row row-cols-2 g-2">
+                                                    <div class="col"><span class="small">Temperature</span></div>
+                                                    <div class="col"><strong id="unified-temp">-- °C</strong></div>
+                                                    <div class="col"><span class="small">Humidity</span></div>
+                                                    <div class="col"><strong id="unified-humid">-- %</strong></div>
+                                                    <div class="col"><span class="small">Pressure</span></div>
+                                                    <div class="col"><strong id="unified-pressure">-- hPa</strong></div>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <h6 class="text-muted mb-2"><i class="bi bi-ear"></i> Air Quality</h6>
-                                            <div class="row row-cols-2 g-2">
-                                                <div class="col"><span class="small">NO₂</span></div>
-                                                <div class="col"><strong id="unified-no2">-- ppb</strong></div>
-                                                <div class="col"><span class="small">VOC</span></div>
-                                                <div class="col"><strong id="unified-voc">-- ppb</strong></div>
-                                                <div class="col"><span class="small">Noise</span></div>
-                                                <div class="col"><strong id="unified-noise">-- dB</strong></div>
+                                            <div class="col-md-3">
+                                                <h6 class="text-muted mb-2"><i class="bi bi-ear"></i> Air Quality</h6>
+                                                <div class="row row-cols-2 g-2">
+                                                    <div class="col"><span class="small">NO₂</span></div>
+                                                    <div class="col"><strong id="unified-no2">-- ppb</strong></div>
+                                                    <div class="col"><span class="small">VOC</span></div>
+                                                    <div class="col"><strong id="unified-voc">-- ppb</strong></div>
+                                                    <div class="col"><span class="small">Noise</span></div>
+                                                    <div class="col"><strong id="unified-noise">-- dB</strong></div>
+                                                </div>
                                             </div>
-                                        </div>
-                                        <div class="col-md-3">
-                                            <h6 class="text-muted mb-2"><i class="bi bi-info-circle"></i> Statistics</h6>
-                                            <div class="row row-cols-2 g-2">
-                                                <div class="col"><span class="small">Max PM2.5</span></div>
-                                                <div class="col"><strong id="unified-max-pm25">-- μg/m³</strong></div>
-                                                <div class="col"><span class="small">Avg PM2.5</span></div>
-                                                <div class="col"><strong id="unified-avg-pm25">-- μg/m³</strong></div>
-                                                <div class="col"><span class="small">AQI</span></div>
-                                                <div class="col"><strong id="unified-aqi">--</strong></div>
+                                            <div class="col-md-3">
+                                                <h6 class="text-muted mb-2"><i class="bi bi-info-circle"></i> Statistics
+                                                </h6>
+                                                <div class="row row-cols-2 g-2">
+                                                    <div class="col"><span class="small">Max PM2.5</span></div>
+                                                    <div class="col"><strong id="unified-max-pm25">-- μg/m³</strong>
+                                                    </div>
+                                                    <div class="col"><span class="small">Avg PM2.5</span></div>
+                                                    <div class="col"><strong id="unified-avg-pm25">-- μg/m³</strong>
+                                                    </div>
+                                                    <div class="col"><span class="small">AQI</span></div>
+                                                    <div class="col"><strong id="unified-aqi">--</strong></div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -423,80 +502,83 @@
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Environmental Tab -->
-            <div class="tab-pane fade" id="environmental" role="tabpanel" aria-labelledby="environmental-tab">
+                <!-- Environmental Tab -->
+                <div class="tab-pane fade" id="environmental" role="tabpanel" aria-labelledby="environmental-tab">
 
-                <!-- Live Environmental Data Cards -->
-                <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4" id="environmentalDataContainer">
-                    <!-- Cards will be dynamically loaded here -->
+                    <!-- Live Environmental Data Cards -->
+                    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mb-4" id="environmentalDataContainer">
+                        <!-- Cards will be dynamically loaded here -->
+                    </div>
                 </div>
-            </div>
 
 
 
-            <!-- Settings Tab -->
-            <div class="tab-pane fade" id="settings" role="tabpanel" aria-labelledby="settings-tab">
-                <div class="row mt-3">
-                    <div class="col-lg-6 mb-4">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0">
-                                    <i class="bi bi-sliders me-2"></i>Threshold Configuration
-                                </h6>
-                            </div>
-                            <div class="card-body">
-                                <div id="thresholdSettings">
-                                    <!-- Threshold settings will be populated by JS -->
+                <!-- Settings Tab -->
+                <div class="tab-pane fade" id="settings" role="tabpanel" aria-labelledby="settings-tab">
+                    <div class="row mt-3">
+                        <div class="col-lg-6 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-sliders me-2"></i>Threshold Configuration
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <div id="thresholdSettings">
+                                        <!-- Threshold settings will be populated by JS -->
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                    
-                    <div class="col-lg-6 mb-4">
-                        <div class="card">
-                            <div class="card-header">
-                                <h6 class="mb-0">
-                                    <i class="bi bi-toggles2 me-2"></i>Relay Control
-                                </h6>
-                            </div>
-                            <div class="card-body">
-                                <div class="mb-3">
-                                    <label class="form-label fw-bold">Relay Operation Mode:</label>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="relayMode" id="manualMode" value="manual" checked>
-                                        <label class="form-check-label" for="manualMode">
-                                            <i class="bi bi-hand-index me-2"></i>Manual Control
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="radio" name="relayMode" id="autoMode" value="auto">
-                                        <label class="form-check-label" for="autoMode">
-                                            <i class="bi bi-gear me-2"></i>Auto (Threshold Based)
-                                        </label>
-                                    </div>
-                                </div>
-                                
-                                <div id="manualControls">
-                                    <div class="d-grid gap-2">
-                                        <button class="btn btn-success" onclick="controlRelay('ON')">
-                                            <i class="bi bi-power me-2"></i>Turn ON
-                                        </button>
-                                        <button class="btn btn-danger" onclick="controlRelay('OFF')">
-                                            <i class="bi bi-power me-2"></i>Turn OFF
-                                        </button>
-                                    </div>
-                                </div>
 
-                                <div id="autoControls" style="display: none;">
+                        <div class="col-lg-6 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="bi bi-toggles2 me-2"></i>Relay Control
+                                    </h6>
+                                </div>
+                                <div class="card-body">
                                     <div class="mb-3">
-                                        <label for="autoThreshold" class="form-label">Auto ON Threshold (PM2.5)</label>
-                                        <input type="number" class="form-control" id="autoThreshold" value="75">
+                                        <label class="form-label fw-bold">Relay Operation Mode:</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="relayMode"
+                                                id="manualMode" value="manual" checked>
+                                            <label class="form-check-label" for="manualMode">
+                                                <i class="bi bi-hand-index me-2"></i>Manual Control
+                                            </label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="radio" name="relayMode" id="autoMode"
+                                                value="auto">
+                                            <label class="form-check-label" for="autoMode">
+                                                <i class="bi bi-gear me-2"></i>Auto (Threshold Based)
+                                            </label>
+                                        </div>
                                     </div>
-                                    <button class="btn btn-primary w-100" onclick="updateAutoMode()">
-                                        <i class="bi bi-check2 me-2"></i>Update Auto Mode
-                                    </button>
+
+                                    <div id="manualControls">
+                                        <div class="d-grid gap-2">
+                                            <button class="btn btn-success" onclick="controlRelay('ON')">
+                                                <i class="bi bi-power me-2"></i>Turn ON
+                                            </button>
+                                            <button class="btn btn-danger" onclick="controlRelay('OFF')">
+                                                <i class="bi bi-power me-2"></i>Turn OFF
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div id="autoControls" style="display: none;">
+                                        <div class="mb-3">
+                                            <label for="autoThreshold" class="form-label">Auto ON Threshold
+                                                (PM2.5)</label>
+                                            <input type="number" class="form-control" id="autoThreshold" value="75">
+                                        </div>
+                                        <button class="btn btn-primary w-100" onclick="updateAutoMode()">
+                                            <i class="bi bi-check2 me-2"></i>Update Auto Mode
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -504,338 +586,377 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Loading Modal -->
-    <div class="modal fade" id="loadingModal" tabindex="-1" data-bs-backdrop="static">
-        <div class="modal-dialog modal-sm modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-body text-center">
-                    <div class="loading-spinner">
-                        <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Loading...</span>
+        <!-- Loading Modal -->
+        <div class="modal fade" id="loadingModal" tabindex="-1" data-bs-backdrop="static">
+            <div class="modal-dialog modal-sm modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-body text-center">
+                        <div class="loading-spinner">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <div class="loading-dots mt-2">
+                                <span class="dot"></span>
+                                <span class="dot"></span>
+                                <span class="dot"></span>
+                            </div>
                         </div>
-                        <div class="loading-dots mt-2">
-                            <span class="dot"></span>
-                            <span class="dot"></span>
-                            <span class="dot"></span>
+                        <div class="mt-3">
+                            <h6 class="mb-1">Loading data...</h6>
+                            <small class="text-muted" id="loadingProgress">Please wait</small>
                         </div>
-                    </div>
-                    <div class="mt-3">
-                        <h6 class="mb-1">Loading data...</h6>
-                        <small class="text-muted" id="loadingProgress">Please wait</small>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Success/Error Toast Container -->
-    <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 11;">
-        <!-- Toasts will be dynamically added here -->
-    </div>
+        <!-- Success/Error Toast Container -->
+        <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 11;">
+            <!-- Toasts will be dynamically added here -->
+        </div>
 
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/set_backend_url.js"></script>
-    <script src="static/script.js?v=20260603-exportfix-v11"></script>
+        <!-- Bootstrap JS -->
+        <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+        <script src="/set_backend_url.js"></script>
+        <script src="static/script.js?v=20260603-exportfix-v11"></script>
 
-    <!-- Additional styles for enhanced UI -->
-    <style>
-        /* Enhanced Status Indicators */
-        .status-indicator {
-            position: relative;
-        }
-        
-        .status-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background: #dc3545;
-            animation: pulse 2s infinite;
-        }
-        
-        .status-dot.online {
-            background: #28a745;
-        }
-        
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
-        }
+        <!-- Additional styles for enhanced UI -->
+        <style>
+            /* Enhanced Status Indicators */
+            .status-indicator {
+                position: relative;
+            }
 
-        /* Enhanced Dashboard Cards */
-        .dashboard-header {
-            background: linear-gradient(135deg, var(--card-bg) 0%, rgba(13, 110, 253, 0.05) 100%);
-            border-left: 4px solid #0d6efd;
-        }
+            .status-dot {
+                width: 12px;
+                height: 12px;
+                border-radius: 50%;
+                background: #dc3545;
+                animation: pulse 2s infinite;
+            }
 
-        .quick-stat {
-            display: flex;
-            align-items: center;
-            padding: 0.5rem;
-            border-radius: 8px;
-            transition: all 0.3s ease;
-        }
+            .status-dot.online {
+                background: #28a745;
+            }
 
-        .quick-stat:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
+            @keyframes pulse {
+                0% {
+                    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+                }
 
-        .stat-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-right: 0.75rem;
-            color: white;
-        }
+                70% {
+                    box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+                }
 
-        .stat-info h5 {
-            font-weight: 700;
-            margin-bottom: 0;
-        }
+                100% {
+                    box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+                }
+            }
 
-        /* Enhanced Chart Cards */
-        .chart-card {
-            border-left: 4px solid #17a2b8;
-            transition: all 0.3s ease;
-        }
+            /* Enhanced Dashboard Cards */
+            .dashboard-header {
+                background: linear-gradient(135deg, var(--card-bg) 0%, rgba(13, 110, 253, 0.05) 100%);
+                border-left: 4px solid #0d6efd;
+            }
 
-        .chart-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-        }
-
-        /* Enhanced Environmental Cards */
-        .environmental-card {
-            border-radius: 15px;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .environmental-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4, #ffeaa7);
-        }
-
-        .environmental-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
-        }
-
-        .env-icon {
-            font-size: 2rem;
-            margin-bottom: 1rem;
-            opacity: 0.8;
-        }
-
-        .env-trend {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            font-size: 1.2rem;
-        }
-
-        /* Enhanced AQI Circle */
-        .aqi-circle {
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            border: 4px solid #e9ecef;
-            transition: all 0.3s ease;
-        }
-
-        .aqi-value {
-            font-size: 2rem;
-            font-weight: bold;
-        }
-
-        .aqi-label {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            font-weight: 600;
-        }
-
-        /* Enhanced PM Readings Grid */
-        .pm-readings-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 0.75rem;
-        }
-
-        .pm-reading-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem;
-            background: rgba(13, 110, 253, 0.05);
-            border-radius: 8px;
-            border-left: 4px solid #0d6efd;
-        }
-
-        /* Enhanced GPS Info Grid */
-        .gps-info-grid {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 0.75rem;
-        }
-
-        .gps-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.5rem;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        .gps-item:last-child {
-            border-bottom: none;
-        }
-
-        .gps-label {
-            font-weight: 600;
-            color: var(--text-color);
-        }
-
-        .gps-value {
-            font-family: 'Courier New', monospace;
-            color: #0d6efd;
-            font-weight: 500;
-        }
-
-        /* Enhanced Map Container */
-        .map-container {
-            height: 400px;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        /* Enhanced Chart Legend */
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.5rem;
-            border-radius: 6px;
-            background: rgba(0,0,0,0.02);
-        }
-
-        .legend-color {
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            border: 2px solid rgba(255,255,255,0.5);
-        }
-
-        /* Enhanced Loading Animation */
-        .loading-dots {
-            display: flex;
-            justify-content: center;
-            gap: 0.25rem;
-        }
-
-        .dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: #0d6efd;
-            animation: loadingDots 1.4s infinite ease-in-out both;
-        }
-
-        .dot:nth-child(1) { animation-delay: -0.32s; }
-        .dot:nth-child(2) { animation-delay: -0.16s; }
-
-        @keyframes loadingDots {
-            0%, 80%, 100% { transform: scale(0); }
-            40% { transform: scale(1); }
-        }
-
-        /* Enhanced Tab Badges */
-        .nav-tabs .nav-link .badge {
-            font-size: 0.65rem;
-            padding: 0.25em 0.4em;
-        }
-
-        /* Device Info Panel */
-        .device-info-panel {
-            margin-top: 1rem;
-        }
-
-        .device-status-card {
-            background: rgba(13, 110, 253, 0.05);
-            border-radius: 8px;
-            padding: 1rem;
-            border: 1px solid rgba(13, 110, 253, 0.1);
-        }
-
-        /* Responsive Enhancements */
-        @media (max-width: 768px) {
             .quick-stat {
-                flex-direction: column;
-                text-align: center;
-                margin-bottom: 1rem;
+                display: flex;
+                align-items: center;
+                padding: 0.5rem;
+                border-radius: 8px;
+                transition: all 0.3s ease;
             }
-            
+
+            .quick-stat:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            }
+
             .stat-icon {
-                margin-right: 0;
-                margin-bottom: 0.5rem;
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin-right: 0.75rem;
+                color: white;
             }
-            
-            .environmental-card .display-4 {
-                font-size: 1.5rem;
+
+            .stat-info h5 {
+                font-weight: 700;
+                margin-bottom: 0;
             }
-        }
 
-        /* Premium Live Telemetry Badge & Dot Animation */
-        .live-reading-badge {
-            background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%) !important;
-            color: white !important;
-            padding: 0.35rem 0.6rem !important;
-            font-size: 0.7rem !important;
-            font-weight: 700 !important;
-            letter-spacing: 1px !important;
-            border-radius: 20px !important;
-            box-shadow: 0 0 10px rgba(255, 75, 43, 0.4) !important;
-            border: 1px solid rgba(255, 255, 255, 0.2) !important;
-            animation: badgePulse 2s infinite ease-in-out !important;
-        }
+            /* Enhanced Chart Cards */
+            .chart-card {
+                border-left: 4px solid #17a2b8;
+                transition: all 0.3s ease;
+            }
 
-        .live-reading-dot {
-            width: 8px;
-            height: 8px;
-            background-color: #fff;
-            border-radius: 50%;
-            display: inline-block;
-            box-shadow: 0 0 8px #fff;
-            animation: dotGlow 1.5s infinite ease-in-out !important;
-        }
+            .chart-card:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            }
 
-        @keyframes badgePulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 10px rgba(255, 75, 43, 0.4); }
-            50% { transform: scale(1.03); box-shadow: 0 0 16px rgba(255, 75, 43, 0.65); }
-        }
+            /* Enhanced Environmental Cards */
+            .environmental-card {
+                border-radius: 15px;
+                transition: all 0.3s ease;
+                position: relative;
+                overflow: hidden;
+            }
 
-        @keyframes dotGlow {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.3); opacity: 0.4; }
-        }
-    </style>
+            .environmental-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 4px;
+                background: linear-gradient(90deg, #ff6b6b, #4ecdc4, #45b7d1, #96ceb4, #ffeaa7);
+            }
+
+            .environmental-card:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+            }
+
+            .env-icon {
+                font-size: 2rem;
+                margin-bottom: 1rem;
+                opacity: 0.8;
+            }
+
+            .env-trend {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                font-size: 1.2rem;
+            }
+
+            /* Enhanced AQI Circle */
+            .aqi-circle {
+                width: 120px;
+                height: 120px;
+                border-radius: 50%;
+                margin: 0 auto;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                border: 4px solid #e9ecef;
+                transition: all 0.3s ease;
+            }
+
+            .aqi-value {
+                font-size: 2rem;
+                font-weight: bold;
+            }
+
+            .aqi-label {
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                font-weight: 600;
+            }
+
+            /* Enhanced PM Readings Grid */
+            .pm-readings-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+            }
+
+            .pm-reading-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.75rem;
+                background: rgba(13, 110, 253, 0.05);
+                border-radius: 8px;
+                border-left: 4px solid #0d6efd;
+            }
+
+            /* Enhanced GPS Info Grid */
+            .gps-info-grid {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 0.75rem;
+            }
+
+            .gps-item {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.5rem;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .gps-item:last-child {
+                border-bottom: none;
+            }
+
+            .gps-label {
+                font-weight: 600;
+                color: var(--text-color);
+            }
+
+            .gps-value {
+                font-family: 'Courier New', monospace;
+                color: #0d6efd;
+                font-weight: 500;
+            }
+
+            /* Enhanced Map Container */
+            .map-container {
+                height: 400px;
+                border-radius: 8px;
+                overflow: hidden;
+            }
+
+            /* Enhanced Chart Legend */
+            .legend-item {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                padding: 0.5rem;
+                border-radius: 6px;
+                background: rgba(0, 0, 0, 0.02);
+            }
+
+            .legend-color {
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                border: 2px solid rgba(255, 255, 255, 0.5);
+            }
+
+            /* Enhanced Loading Animation */
+            .loading-dots {
+                display: flex;
+                justify-content: center;
+                gap: 0.25rem;
+            }
+
+            .dot {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: #0d6efd;
+                animation: loadingDots 1.4s infinite ease-in-out both;
+            }
+
+            .dot:nth-child(1) {
+                animation-delay: -0.32s;
+            }
+
+            .dot:nth-child(2) {
+                animation-delay: -0.16s;
+            }
+
+            @keyframes loadingDots {
+
+                0%,
+                80%,
+                100% {
+                    transform: scale(0);
+                }
+
+                40% {
+                    transform: scale(1);
+                }
+            }
+
+            /* Enhanced Tab Badges */
+            .nav-tabs .nav-link .badge {
+                font-size: 0.65rem;
+                padding: 0.25em 0.4em;
+            }
+
+            /* Device Info Panel */
+            .device-info-panel {
+                margin-top: 1rem;
+            }
+
+            .device-status-card {
+                background: rgba(13, 110, 253, 0.05);
+                border-radius: 8px;
+                padding: 1rem;
+                border: 1px solid rgba(13, 110, 253, 0.1);
+            }
+
+            /* Responsive Enhancements */
+            @media (max-width: 768px) {
+                .quick-stat {
+                    flex-direction: column;
+                    text-align: center;
+                    margin-bottom: 1rem;
+                }
+
+                .stat-icon {
+                    margin-right: 0;
+                    margin-bottom: 0.5rem;
+                }
+
+                .environmental-card .display-4 {
+                    font-size: 1.5rem;
+                }
+            }
+
+            /* Premium Live Telemetry Badge & Dot Animation */
+            .live-reading-badge {
+                background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%) !important;
+                color: white !important;
+                padding: 0.35rem 0.6rem !important;
+                font-size: 0.7rem !important;
+                font-weight: 700 !important;
+                letter-spacing: 1px !important;
+                border-radius: 20px !important;
+                box-shadow: 0 0 10px rgba(255, 75, 43, 0.4) !important;
+                border: 1px solid rgba(255, 255, 255, 0.2) !important;
+                animation: badgePulse 2s infinite ease-in-out !important;
+            }
+
+            .live-reading-dot {
+                width: 8px;
+                height: 8px;
+                background-color: #fff;
+                border-radius: 50%;
+                display: inline-block;
+                box-shadow: 0 0 8px #fff;
+                animation: dotGlow 1.5s infinite ease-in-out !important;
+            }
+
+            @keyframes badgePulse {
+
+                0%,
+                100% {
+                    transform: scale(1);
+                    box-shadow: 0 0 10px rgba(255, 75, 43, 0.4);
+                }
+
+                50% {
+                    transform: scale(1.03);
+                    box-shadow: 0 0 16px rgba(255, 75, 43, 0.65);
+                }
+            }
+
+            @keyframes dotGlow {
+
+                0%,
+                100% {
+                    transform: scale(1);
+                    opacity: 1;
+                }
+
+                50% {
+                    transform: scale(1.3);
+                    opacity: 0.4;
+                }
+            }
+        </style>
 
 </body>
+
 </html>
