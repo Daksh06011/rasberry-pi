@@ -1357,6 +1357,10 @@ def on_mqtt_message(client, userdata, msg):
         payload = json.loads(msg.payload.decode())
         device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac") or os.getenv('DEFAULT_DEVICE_ID', 'SGN-V3-12')
 
+        # Inject device_id if not present in payload to allow resolve_or_create_device to link it
+        if "deviceid" not in payload and "i" not in payload and "site" not in payload and "mac" not in payload:
+            payload["deviceid"] = device_id
+
         if not device_id:
             logging.warning("MQTT message missing deviceid or i")
             return
@@ -1423,6 +1427,10 @@ def start_mqtt_client(data_source_id, broker_url, topics, username=None, passwor
 
                 payload = json.loads(raw_payload)
                 device_id = payload.get("deviceid") or payload.get("i") or payload.get("site") or payload.get("mac") or os.getenv('DEFAULT_DEVICE_ID', 'SGN-V3-12')
+
+                # Inject device_id if not present in payload to allow resolve_or_create_device to link it
+                if "deviceid" not in payload and "i" not in payload and "site" not in payload and "mac" not in payload:
+                    payload["deviceid"] = device_id
 
                 if not device_id:
                     logging.warning(f"[MQTT-{data_source_id}] Message missing deviceid or i")
