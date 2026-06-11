@@ -8,7 +8,7 @@
 // API Configuration for decoupled frontend
 // Use an injected runtime value `window.__BACKEND_URL` when available (Vercel can inject at build),
 // fall back to localhost during development, otherwise use relative paths so Vercel can proxy `/api`.
-const API_BASE_URL = window.__BACKEND_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname ? 'http://127.0.0.1:5000' : 'https://reasonable-wonder-production-c57e.up.railway.app');
+const API_BASE_URL = window.__BACKEND_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || !window.location.hostname ? 'http://127.0.0.1:5000' : window.location.origin);
 
 function parseLocalTime(t) {
     if (!t) return null;
