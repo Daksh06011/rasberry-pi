@@ -174,27 +174,46 @@ To expose the dashboard on port 80 and ensure WebSocket (Socket.IO) connections 
    ```
 3. Paste the following Nginx block:
    ```nginx
-   server {
-       listen 80;
-       server_name _; # Responds to all requests on your local network (e.g., http://192.168.31.195)
+    server {
+        listen 80;
+        server_name _; # Responds to all requests on your local network (e.g., http://192.168.31.195)
 
-       location / {
-           proxy_pass http://127.0.0.1:5000;
-           proxy_http_version 1.1;
-           
-           # WebSocket headers (CRITICAL for real-time dashboard data)
-           proxy_set_header Upgrade $http_upgrade;
-           proxy_set_header Connection "upgrade";
-           
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-           
-           proxy_read_timeout 86400s;
-           proxy_send_timeout 86400s;
-       }
-   }
+        root /home/raspberry/SGN/frontend;
+        index index.html;
+
+        # Serve static HTML files from the frontend folder
+        location / {
+            try_files $uri $uri/ $uri.html =404;
+        }
+
+        # Proxy API requests to the Flask backend
+        location /api/ {
+            proxy_pass http://127.0.0.1:5000;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # Proxy Socket.IO/WebSockets requests to the Flask backend
+        location /socket.io/ {
+            proxy_pass http://127.0.0.1:5000;
+            proxy_http_version 1.1;
+            
+            # WebSocket headers
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+    }
    ```
 4. Enable the configuration and restart Nginx:
    ```bash
